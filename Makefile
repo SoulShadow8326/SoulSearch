@@ -1,7 +1,7 @@
 BINARY_NAME=soulsearch
 PORT=8080
 
-.PHONY: build clean run-server crawl-demo index help
+.PHONY: build clean run-server run-proxy crawl-demo index dev help
 
 build:
 	go build -o $(BINARY_NAME) .
@@ -9,9 +9,20 @@ build:
 clean:
 	rm -f $(BINARY_NAME)
 	rm -rf data/
+	rm -f /tmp/soulsearch.sock
 
 run-server: build
-	./$(BINARY_NAME) -mode=server -port=$(PORT)
+	./$(BINARY_NAME) -mode=server
+
+run-proxy: build
+	./$(BINARY_NAME) -mode=proxy -port=$(PORT)
+
+dev: build
+	@echo "Starting Unix socket server in background..."
+	./$(BINARY_NAME) -mode=server &
+	@sleep 2
+	@echo "Starting HTTP proxy on port $(PORT)..."
+	./$(BINARY_NAME) -mode=proxy -port=$(PORT)
 
 crawl-demo: build
 	./$(BINARY_NAME) -mode=crawl -url="https://news.ycombinator.com" -max=100
@@ -24,8 +35,11 @@ full-demo: build
 	./$(BINARY_NAME) -mode=crawl -url="https://news.ycombinator.com" -max=50
 	@echo "Step 2: Building search index..."
 	./$(BINARY_NAME) -mode=index
-	@echo "Step 3: Starting search server on port $(PORT)..."
-	./$(BINARY_NAME) -mode=server -port=$(PORT)
+	@echo "Step 3: Starting Unix socket server in background..."
+	./$(BINARY_NAME) -mode=server &
+	@sleep 2
+	@echo "Step 4: Starting HTTP proxy on port $(PORT)..."
+	./$(BINARY_NAME) -mode=proxy -port=$(PORT)
 
 help:
 	@echo "SoulSearch Build Commands:"

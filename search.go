@@ -227,9 +227,10 @@ func (se *SearchEngine) generateSnippet(url string, queryTerms []string) string 
 	snippet := strings.Join(words[bestStart:bestStart+30], " ")
 
 	for _, term := range queryTerms {
+		capitalized := strings.ToUpper(term[:1]) + term[1:]
 		re := strings.NewReplacer(
 			term, "<b>"+term+"</b>",
-			strings.Title(term), "<b>"+strings.Title(term)+"</b>",
+			capitalized, "<b>"+capitalized+"</b>",
 			strings.ToUpper(term), "<b>"+strings.ToUpper(term)+"</b>",
 		)
 		snippet = re.Replace(snippet)

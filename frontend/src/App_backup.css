@@ -8,8 +8,8 @@ body {
   font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: #FFFFFF;
-  color: #434343;
+  background: #213448;
+  color: #ECEFCA;
   overflow-x: hidden;
 }
 
@@ -18,7 +18,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #FFFFFF;
+  background: #213448;
   position: relative;
   overflow: hidden;
 }
@@ -31,23 +31,101 @@ body {
   right: 0;
   bottom: 0;
   background: 
-    radial-gradient(ellipse at 20% 30%, rgba(41, 119, 245, 0.05) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 70%, rgba(24, 41, 48, 0.03) 0%, transparent 50%);
+    radial-gradient(2px 2px at 12px 15px, #ECEFCA, transparent),
+    radial-gradient(2px 2px at 45px 78px, #94B4C1, transparent),
+    radial-gradient(1px 1px at 89px 34px, #ECEFCA, transparent),
+    radial-gradient(1px 1px at 156px 98px, #547792, transparent),
+    radial-gradient(2px 2px at 234px 12px, #ECEFCA, transparent),
+    radial-gradient(1px 1px at 187px 67px, #94B4C1, transparent),
+    radial-gradient(1px 1px at 312px 145px, #ECEFCA, transparent),
+    radial-gradient(2px 2px at 278px 89px, #547792, transparent),
+    radial-gradient(1px 1px at 423px 23px, #94B4C1, transparent),
+    radial-gradient(2px 2px at 367px 156px, #ECEFCA, transparent),
+    radial-gradient(1px 1px at 512px 78px, #547792, transparent),
+    radial-gradient(1px 1px at 445px 134px, #ECEFCA, transparent),
+    radial-gradient(2px 2px at 634px 45px, #94B4C1, transparent),
+    radial-gradient(1px 1px at 578px 189px, #ECEFCA, transparent),
+    radial-gradient(1px 1px at 723px 67px, #547792, transparent),
+    radial-gradient(2px 2px at 667px 123px, #ECEFCA, transparent),
+    radial-gradient(1px 1px at 812px 34px, #94B4C1, transparent),
+    radial-gradient(1px 1px at 756px 178px, #ECEFCA, transparent),
+    radial-gradient(2px 2px at 89px 234px, #547792, transparent),
+    radial-gradient(1px 1px at 145px 289px, #ECEFCA, transparent),
+    radial-gradient(1px 1px at 234px 267px, #94B4C1, transparent),
+    radial-gradient(2px 2px at 178px 323px, #ECEFCA, transparent),
+    radial-gradient(1px 1px at 323px 245px, #547792, transparent),
+    radial-gradient(1px 1px at 267px 378px, #ECEFCA, transparent),
+    radial-gradient(2px 2px at 456px 289px, #94B4C1, transparent),
+    radial-gradient(1px 1px at 389px 334px, #ECEFCA, transparent),
+    radial-gradient(1px 1px at 534px 267px, #547792, transparent),
+    radial-gradient(2px 2px at 478px 389px, #ECEFCA, transparent),
+    radial-gradient(1px 1px at 612px 234px, #94B4C1, transparent),
+    radial-gradient(1px 1px at 567px 345px, #ECEFCA, transparent),
+    radial-gradient(2px 2px at 723px 289px, #547792, transparent),
+    radial-gradient(1px 1px at 678px 367px, #ECEFCA, transparent),
+    radial-gradient(1px 1px at 789px 234px, #94B4C1, transparent),
+    radial-gradient(2px 2px at 834px 378px, #ECEFCA, transparent),
+    linear-gradient(27deg, transparent 12px, rgba(148, 180, 193, 0.03) 13px, transparent 14px),
+    linear-gradient(68deg, transparent 45px, rgba(84, 119, 146, 0.02) 46px, transparent 47px),
+    linear-gradient(143deg, transparent 78px, rgba(148, 180, 193, 0.03) 79px, transparent 80px),
+    linear-gradient(201deg, transparent 156px, rgba(84, 119, 146, 0.02) 157px, transparent 158px),
+    linear-gradient(89deg, transparent 234px, rgba(148, 180, 193, 0.03) 235px, transparent 236px),
+    linear-gradient(312deg, transparent 187px, rgba(84, 119, 146, 0.02) 188px, transparent 189px),
+    linear-gradient(178deg, transparent 312px, rgba(148, 180, 193, 0.03) 313px, transparent 314px),
+    linear-gradient(245deg, transparent 278px, rgba(84, 119, 146, 0.02) 279px, transparent 280px),
+    linear-gradient(67deg, transparent 423px, rgba(148, 180, 193, 0.03) 424px, transparent 425px),
+    linear-gradient(134deg, transparent 367px, rgba(84, 119, 146, 0.02) 368px, transparent 369px);
+  background-size: 900px 400px;
+  animation: constellation-drift 120s linear infinite;
   pointer-events: none;
 }
 
 .app::after {
-  display: none;
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 800px;
+  height: 800px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(ellipse at center, 
+    transparent 0%, 
+    transparent 30%, 
+    rgba(33, 52, 72, 0.2) 40%,
+    rgba(33, 52, 72, 0.6) 60%,
+    rgba(33, 52, 72, 0.9) 80%,
+    #213448 100%);
+  border-radius: 50%;
+  animation: devour 12s ease-in-out infinite, slowly-rotate 40s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes constellation-drift {
+  0% {
+    transform: translateX(0) translateY(0) rotate(0deg);
+  }
+  25% {
+    transform: translateX(-30px) translateY(-15px) rotate(0.5deg);
+  }
+  50% {
+    transform: translateX(-15px) translateY(-30px) rotate(1deg);
+  }
+  75% {
+    transform: translateX(20px) translateY(-20px) rotate(0.3deg);
+  }
+  100% {
+    transform: translateX(0) translateY(0) rotate(0deg);
+  }
 }
 
 @keyframes devour {
   0%, 100% { 
-    opacity: 0.4; 
+    opacity: 0.3; 
     transform: translate(-50%, -50%) scale(1); 
   }
   50% { 
-    opacity: 0.8; 
-    transform: translate(-50%, -50%) scale(1.1); 
+    opacity: 0.7; 
+    transform: translate(-50%, -50%) scale(1.2); 
   }
 }
 
@@ -63,23 +141,38 @@ body {
   padding: 20px;
   position: relative;
   z-index: 10;
+  transform-style: preserve-3d;
 }
 
 .logo-section {
   margin-bottom: 50px;
   position: relative;
+  transform-style: preserve-3d;
 }
 
 .logo {
-  font-size: clamp(3rem, 8vw, 5.5rem);
-  font-weight: 700;
-  color: #2977F5;
+  font-size: 5.5rem;
+  font-weight: 200;
+  color: #ECEFCA;
   margin-bottom: 20px;
-  letter-spacing: -2px;
+  letter-spacing: -3px;
   position: relative;
-  text-shadow: none;
-  transform: none;
-  animation: none;
+  text-shadow: 
+    0 0 30px rgba(236, 239, 202, 0.3),
+    0 5px 10px rgba(33, 52, 72, 0.5),
+    0 10px 20px rgba(33, 52, 72, 0.3),
+    0 15px 30px rgba(33, 52, 72, 0.2);
+  transform: perspective(1000px) rotateX(10deg);
+  animation: logo-float 6s ease-in-out infinite;
+}
+
+@keyframes logo-float {
+  0%, 100% {
+    transform: perspective(1000px) rotateX(10deg) translateZ(0px);
+  }
+  50% {
+    transform: perspective(1000px) rotateX(15deg) translateZ(10px);
+  }
 }
 
 .logo::after {
@@ -90,12 +183,15 @@ body {
   transform: translateX(-50%);
   width: 80px;
   height: 3px;
-  background: linear-gradient(90deg, transparent, #2977F5, transparent);
+  background: linear-gradient(90deg, transparent, #94B4C1, transparent);
   border-radius: 2px;
+  box-shadow: 
+    0 0 10px rgba(148, 180, 193, 0.5),
+    0 0 20px rgba(148, 180, 193, 0.3);
 }
 
 .tagline {
-  color: #456484;
+  color: #94B4C1;
   font-size: 1.1rem;
   font-weight: 300;
   margin-top: 15px;
@@ -109,37 +205,44 @@ body {
   position: relative;
   display: flex;
   align-items: center;
-  background: #FFFFFF;
+  background: #ECEFCA;
   border-radius: 32px;
   box-shadow: 
-    0 2px 8px rgba(41, 119, 245, 0.1),
-    0 4px 16px rgba(24, 41, 48, 0.05);
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 20px 60px rgba(33, 52, 72, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 -1px 0 rgba(84, 119, 146, 0.1);
   overflow: hidden;
   max-width: 584px;
-  width: 100%;
   margin: 0 auto;
-  transition: all 0.3s ease;
-  border: 2px solid #2977F5;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 2px solid transparent;
+  transform: perspective(1000px) rotateX(5deg) translateZ(20px);
 }
 
 .search-box:hover {
+  transform: perspective(1000px) rotateX(8deg) translateZ(40px) translateY(-5px);
   box-shadow: 
-    0 4px 16px rgba(41, 119, 245, 0.15),
-    0 8px 24px rgba(24, 41, 48, 0.08);
+    0 15px 50px rgba(0, 0, 0, 0.5),
+    0 30px 80px rgba(33, 52, 72, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 0 rgba(84, 119, 146, 0.2);
 }
 
 .search-box:focus-within {
-  border-color: #2977F5;
+  border-color: #547792;
+  transform: perspective(1000px) rotateX(10deg) translateZ(50px) translateY(-8px);
   box-shadow: 
-    0 4px 16px rgba(41, 119, 245, 0.2),
-    0 8px 24px rgba(24, 41, 48, 0.1),
-    0 0 0 3px rgba(41, 119, 245, 0.1);
+    0 20px 60px rgba(0, 0, 0, 0.6),
+    0 40px 100px rgba(33, 52, 72, 0.5),
+    0 0 0 3px rgba(84, 119, 146, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 
 .search-icon {
   position: absolute;
   left: 20px;
-  color: #456484;
+  color: #547792;
   z-index: 1;
 }
 
@@ -150,19 +253,19 @@ body {
   outline: none;
   font-size: 17px;
   background: transparent;
-  color: #434343;
+  color: #213448;
   font-weight: 400;
 }
 
 .search-input::placeholder {
-  color: #456484;
+  color: #547792;
   opacity: 0.8;
 }
 
 .search-button {
   position: absolute;
   right: 10px;
-  background: #2977F5;
+  background: #547792;
   border: none;
   border-radius: 50%;
   width: 36px;
@@ -170,7 +273,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #FFFFFF;
+  color: #ECEFCA;
   cursor: pointer;
   transition: all 0.2s ease;
   box-shadow: 0 2px 8px rgba(84, 119, 146, 0.3);
@@ -184,20 +287,16 @@ body {
 
 .search-results-page {
   min-height: 100vh;
-  background: #FFFFFF;
-  color: #434343;
-  position: relative;
-  overflow-x: hidden;
+  background: #ECEFCA;
+  color: #213448;
 }
 
 .search-header {
-  border-bottom: 2px solid rgba(41, 119, 245, 0.1);
+  border-bottom: 2px solid #94B4C1;
   padding: 16px 0;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
+  background: #ECEFCA;
   position: sticky;
   top: 0;
-  z-index: 20;
   z-index: 100;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
 }
@@ -214,7 +313,7 @@ body {
 .logo-small {
   font-size: 28px;
   font-weight: 300;
-  color: #2977F5;
+  color: #213448;
   cursor: pointer;
   min-width: 140px;
   position: relative;
@@ -222,7 +321,7 @@ body {
 }
 
 .logo-small:hover {
-  color: #456484;
+  color: #547792;
 }
 
 .logo-small::after {
@@ -232,7 +331,7 @@ body {
   left: 0;
   width: 0;
   height: 2px;
-  background: #2977F5;
+  background: #94B4C1;
   transition: width 0.3s ease;
 }
 
@@ -327,8 +426,6 @@ body {
   max-width: 600px;
   margin: 0 auto;
   padding: 0 24px;
-  position: relative;
-  z-index: 10;
 }
 
 .search-tabs {
@@ -513,9 +610,8 @@ body {
 }
 
 @media (max-width: 768px) {
-  .home-container {
-    max-width: 90%;
-    padding: 16px;
+  .logo {
+    font-size: 4rem;
   }
   
   .search-header-content {
@@ -536,49 +632,19 @@ body {
   .search-tabs::-webkit-scrollbar {
     display: none;
   }
-  
-  .search-box {
-    max-width: 100%;
-    margin: 0;
-  }
-  
-  .search-input {
-    font-size: 16px;
-    padding: 16px 60px 16px 56px;
-  }
 }
 
 @media (max-width: 480px) {
+  .logo {
+    font-size: 3.5rem;
+  }
+  
   .app::before {
     opacity: 0.05;
   }
   
-  .home-container {
-    padding: 12px;
-  }
-  
   .search-box {
-    margin: 0;
-    border-radius: 24px;
-  }
-  
-  .search-input {
-    font-size: 16px;
-    padding: 14px 50px 14px 48px;
-  }
-  
-  .search-icon {
-    left: 16px;
-  }
-  
-  .search-button {
-    right: 8px;
-    width: 32px;
-    height: 32px;
-  }
-  
-  .logo-section {
-    margin-bottom: 40px;
+    margin: 0 16px;
   }
   
   .result-item:hover {

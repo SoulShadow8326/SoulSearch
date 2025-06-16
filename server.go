@@ -4,14 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 )
 
 type Server struct {
-	port   int
-	engine *SearchEngine
+	socketPath string
+	engine     *SearchEngine
 }
 
 type SearchRequest struct {
@@ -30,17 +32,51 @@ type SearchResponse struct {
 
 func NewServer(port int) *Server {
 	return &Server{
-		port:   port,
-		engine: NewSearchEngine(),
+		socketPath: "/tmp/soulsearch.sock",
+		engine:     NewSearchEngine(),
 	}
 }
 
 func (s *Server) Start() {
+	os.Remove(s.socketPath)
+
+	listener, err := net.Listen("unix", s.socketPath)
+	if err != nil {
+		log.Fatal("Failed to create Unix socket:", err)
+	}
+	defer listener.Close()
+
+	os.Chmod(s.socketPath, 0666)
+
 	http.HandleFunc("/api/search", s.handleSearch)
 	http.HandleFunc("/api/health", s.handleHealth)
+	http.HandleFunc("/api/crawl", s.handleCrawl)
+	http.HandleFunc("/api/index", s.handleIndex)
 
-	fmt.Printf("SoulSearch API running on http://localhost:%d\n", s.port)
-	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(s.port), nil))
+	go func() {
+		time.Sleep(2 * time.Second)
+		crawler := NewCrawler(100)
+
+		sites := []string{
+			"https://news.ycombinator.com",
+			"https://en.wikipedia.org/wiki/Main_Page",
+			"https://github.com/trending",
+			"https://stackoverflow.com/questions",
+			"https://www.reddit.com/r/programming",
+		}
+
+		for _, site := range sites {
+			go crawler.CrawlFromSeed(site)
+			time.Sleep(1 * time.Second)
+		}
+
+		time.Sleep(10 * time.Second)
+		indexer := NewIndexer()
+		indexer.BuildIndex()
+	}()
+
+	fmt.Printf("SoulSearch API running on Unix socket: %s\n", s.socketPath)
+	log.Fatal(http.Serve(listener, nil))
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +157,61 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	response := map[string]string{
 		"status":  "healthy",
 		"service": "soulsearch",
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleCrawl(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		URL      string `json:"url"`
+		MaxPages int    `json:"max_pages"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if req.URL == "" {
+		req.URL = "https://example.com"
+	}
+	if req.MaxPages == 0 {
+		req.MaxPages = 100
+	}
+
+	crawler := NewCrawler(req.MaxPages)
+	go crawler.CrawlFromSeed(req.URL)
+
+	response := map[string]interface{}{
+		"status":    "started",
+		"url":       req.URL,
+		"max_pages": req.MaxPages,
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	indexer := NewIndexer()
+	go indexer.BuildIndex()
+
+	response := map[string]string{
+		"status": "indexing started",
 	}
 	json.NewEncoder(w).Encode(response)
 }

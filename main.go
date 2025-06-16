@@ -8,8 +8,8 @@ import (
 )
 
 func main() {
-	var mode = flag.String("mode", "server", "Mode: server, crawl, or index")
-	var port = flag.Int("port", 8080, "Server port")
+	var mode = flag.String("mode", "server", "Mode: server, proxy, crawl, or index")
+	var port = flag.Int("port", 8080, "Proxy port")
 	var url = flag.String("url", "", "URL to start crawling from")
 	var maxPages = flag.Int("max", 1000, "Maximum pages to crawl")
 	flag.Parse()
@@ -26,11 +26,14 @@ func main() {
 		indexer := NewIndexer()
 		indexer.BuildIndex()
 	case "server":
-		server := NewServer(*port)
-		log.Printf("Starting SoulSearch server on port %d", *port)
+		server := NewServer(0)
+		log.Println("Starting SoulSearch Unix socket server")
 		server.Start()
+	case "proxy":
+		proxy := NewProxy(*port, "/tmp/soulsearch.sock")
+		proxy.Start()
 	default:
-		fmt.Println("Invalid mode. Use: server, crawl, or index")
+		fmt.Println("Invalid mode. Use: server, proxy, crawl, or index")
 		os.Exit(1)
 	}
 }

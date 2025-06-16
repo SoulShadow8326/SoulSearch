@@ -1,5 +1,7 @@
 *.gob
 soulsearch
+/tmp/soulsearch.sock
+*.sock
 frontend/node_modules
 frontend/build
 frontend/.env.local
