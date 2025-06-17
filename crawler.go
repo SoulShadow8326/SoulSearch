@@ -49,25 +49,34 @@ func (c *Crawler) CrawlFromSeed(seedURL string) {
 	c.queue = append(c.queue, seedURL)
 
 	for len(c.queue) > 0 && len(c.pages) < c.maxPages {
+		c.mutex.Lock()
+		if len(c.queue) == 0 {
+			c.mutex.Unlock()
+			break
+		}
 		currentURL := c.queue[0]
 		c.queue = c.queue[1:]
 
 		if c.visited[currentURL] {
+			c.mutex.Unlock()
 			continue
 		}
+		c.visited[currentURL] = true
+		c.mutex.Unlock()
 
 		page := c.crawlPage(currentURL)
 		if page != nil {
 			c.mutex.Lock()
 			c.pages = append(c.pages, *page)
-			c.visited[currentURL] = true
 			c.mutex.Unlock()
 
+			c.mutex.Lock()
 			for _, link := range page.Links {
 				if !c.visited[link] && c.isValidURL(link) {
 					c.queue = append(c.queue, link)
 				}
 			}
+			c.mutex.Unlock()
 		}
 
 		time.Sleep(100 * time.Millisecond)

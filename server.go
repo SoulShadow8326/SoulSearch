@@ -11,7 +11,7 @@ import (
 
 type Server struct {
 	port   int
-	engine *AdvancedSearchEngine
+	engine *SearchEngine
 }
 
 type SearchRequest struct {
@@ -34,7 +34,7 @@ func NewServer(port int) *Server {
 	}
 	return &Server{
 		port:   port,
-		engine: NewAdvancedSearchEngine(),
+		engine: NewSearchEngine(),
 	}
 }
 
@@ -47,6 +47,18 @@ func (s *Server) Start() {
 	// Serve static files from frontend/build
 	fs := http.FileServer(http.Dir("./frontend/build"))
 	http.Handle("/", fs)
+
+	fmt.Printf("Starting SoulSearch server on http://localhost:%d...\n", s.port)
+	log.Printf("Starting SoulSearch HTTP server on port %d", s.port)
+
+	indexer := NewIndexer()
+	index := indexer.BuildIndex()
+	if index != nil && len(index.Docs) > 0 {
+		s.engine.LoadIndex(index)
+		log.Printf("Loaded existing index with %d documents", len(index.Docs))
+	} else {
+		log.Printf("No existing index found, starting with empty search engine")
+	}
 
 	go func() {
 		time.Sleep(2 * time.Second)
@@ -66,8 +78,11 @@ func (s *Server) Start() {
 		}
 
 		time.Sleep(10 * time.Second)
-		indexer := NewIndexer()
-		indexer.BuildIndex()
+		newIndex := indexer.BuildIndex()
+		if newIndex != nil && len(newIndex.Docs) > 0 {
+			s.engine.LoadIndex(newIndex)
+			log.Printf("Updated index with %d documents", len(newIndex.Docs))
+		}
 	}()
 
 	fmt.Printf("SoulSearch server running on http://localhost:%d\n", s.port)
@@ -130,9 +145,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		req.Limit = 10
 	}
 
-	start := time.Now()
-	results := s.engine.Search(req.Query, req.Limit)
-	timeTaken := time.Since(start).String()
+	results, timeTaken := s.engine.Search(req.Query, req.Limit)
 
 	log.Printf("Search completed in %s, found %d results", timeTaken, len(results))
 

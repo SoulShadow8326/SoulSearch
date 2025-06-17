@@ -56,11 +56,11 @@ func NewIndexer() *Indexer {
 	}
 }
 
-func (idx *Indexer) BuildIndex() {
+func (idx *Indexer) BuildIndex() *InvertedIndex {
 	pages := idx.loadPages()
 	if len(pages) == 0 {
 		fmt.Println("No pages found. Run crawler first.")
-		return
+		return idx.index
 	}
 
 	pageRanks := idx.calculatePageRank(pages)
@@ -81,6 +81,7 @@ func (idx *Indexer) BuildIndex() {
 	idx.saveIndex()
 	fmt.Printf("Indexed %d documents with %d unique terms\n",
 		len(idx.index.Docs), len(idx.index.Terms))
+	return idx.index
 }
 
 func (idx *Indexer) loadPages() []Page {

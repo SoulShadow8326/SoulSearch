@@ -146,18 +146,14 @@ func (se *SearchEngine) processAdvancedQuery(query string) []string {
 
 	var allTerms []string
 
-	for _, phrase := range phrases {
-		allTerms = append(allTerms, phrase)
-	}
+	allTerms = append(allTerms, phrases...)
 
 	for _, term := range terms {
 		if !se.stopWords[term] && len(term) > 1 {
 			allTerms = append(allTerms, term)
 
 			if synonyms, exists := se.synonyms[term]; exists {
-				for _, synonym := range synonyms {
-					allTerms = append(allTerms, synonym)
-				}
+				allTerms = append(allTerms, synonyms...)
 			}
 
 			stemmed := se.stemWord(term)
@@ -314,7 +310,7 @@ func (se *SearchEngine) scoreAdvancedResults(queryTerms []string, candidates map
 		phraseScore := se.calculatePhraseScore(originalQuery, doc.Content, doc.Title)
 
 		pageRank := se.getPageRank(doc.URL)
-		freshnessScore := 0.5
+		freshnessScore := se.calculateFreshnessScore("")
 
 		totalScore := (titleScore*0.35 + urlScore*0.1 + contentScore*0.3 +
 			proximityScore*0.1 + phraseScore*0.1 +
