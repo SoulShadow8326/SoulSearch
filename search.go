@@ -76,15 +76,16 @@ func NewSearchEngine() *SearchEngine {
 func (se *SearchEngine) LoadIndex(index *InvertedIndex) {
 	se.index = index
 	se.totalDocs = len(index.Docs)
-	se.calculateIDF()
+	se.computeIDF()
+	log.Printf("Search engine loaded with %d terms, %d documents", len(se.index.Terms), se.totalDocs)
 }
 
-func (se *SearchEngine) calculateIDF() {
+func (se *SearchEngine) computeIDF() {
 	se.idfScores = make(map[string]float64)
 	for term, termFreqs := range se.index.Terms {
-		docCount := len(termFreqs)
-		if docCount > 0 {
-			se.idfScores[term] = math.Log(float64(se.totalDocs) / float64(docCount))
+		df := len(termFreqs)
+		if df > 0 {
+			se.idfScores[term] = math.Log(float64(se.totalDocs) / float64(df))
 		}
 	}
 }
@@ -227,16 +228,36 @@ func (se *SearchEngine) findAdvancedCandidates(queryTerms []string) map[string]b
 	candidates := make(map[string]bool)
 	termScores := make(map[string]float64)
 
+	log.Printf("Looking for terms: %v", queryTerms)
+	log.Printf("Available terms in index: %d", len(se.index.Terms))
+
+	foundTerms := []string{}
 	for _, term := range queryTerms {
 		if docList, exists := se.index.Terms[term]; exists {
+			foundTerms = append(foundTerms, term)
 			weight := se.calculateTermWeight(term)
 
 			for _, termFreq := range docList {
 				candidates[termFreq.URL] = true
 				termScores[termFreq.URL] += weight * termFreq.Score
 			}
+		} else {
+			for indexTerm := range se.index.Terms {
+				if strings.Contains(indexTerm, term) || strings.Contains(term, indexTerm) {
+					if docList := se.index.Terms[indexTerm]; len(docList) > 0 {
+						foundTerms = append(foundTerms, indexTerm)
+						weight := se.calculateTermWeight(indexTerm)
+						for _, termFreq := range docList {
+							candidates[termFreq.URL] = true
+							termScores[termFreq.URL] += weight * termFreq.Score * 0.7
+						}
+					}
+					break
+				}
+			}
 		}
 	}
+	log.Printf("Found matching terms: %v", foundTerms)
 
 	if len(candidates) > 100 {
 		threshold := se.calculateThreshold(termScores)
@@ -258,17 +279,29 @@ func (se *SearchEngine) calculateTermWeight(term string) float64 {
 		return idf
 	}
 
-	docFreq := len(se.index.Terms[term])
+	docFreq := 0
+	if termList, exists := se.index.Terms[term]; exists {
+		docFreq = len(termList)
+	}
+
 	if docFreq == 0 {
-		return 0
+		return 0.1
 	}
 
 	totalDocs := float64(se.totalDocs)
 	if totalDocs == 0 {
 		totalDocs = float64(len(se.index.Docs))
+		if totalDocs == 0 {
+			return 1.0
+		}
 	}
 
-	idf := math.Log(totalDocs/float64(docFreq)) + 1
+	idf := math.Log(totalDocs/float64(docFreq)) + 1.0
+
+	if len(term) > 5 {
+		idf *= 1.2
+	}
+
 	se.idfScores[term] = idf
 	return idf
 }
@@ -302,19 +335,22 @@ func (se *SearchEngine) scoreAdvancedResults(queryTerms []string, candidates map
 			continue
 		}
 
-		titleScore := se.calculateTextScore(queryTerms, doc.Title, 4.0)
+		titleScore := se.calculateTextScore(queryTerms, doc.Title, 5.0)
 		urlScore := se.calculateURLScore(queryTerms, doc.URL)
 		contentScore := se.calculateTextScore(queryTerms, doc.Content, 1.0)
 
 		proximityScore := se.calculateProximityScore(queryTerms, doc.Content)
 		phraseScore := se.calculatePhraseScore(originalQuery, doc.Content, doc.Title)
 
+		queryMatchScore := se.calculateQueryMatchScore(queryTerms, doc.Title, doc.Content)
+		lengthScore := se.calculateDocumentLengthScore(doc.Content)
+
 		pageRank := se.getPageRank(doc.URL)
 		freshnessScore := se.calculateFreshnessScore("")
 
-		totalScore := (titleScore*0.35 + urlScore*0.1 + contentScore*0.3 +
-			proximityScore*0.1 + phraseScore*0.1 +
-			pageRank*0.03 + freshnessScore*0.02)
+		totalScore := (titleScore*0.4 + contentScore*0.25 + urlScore*0.08 +
+			proximityScore*0.12 + phraseScore*0.1 + queryMatchScore*0.03 +
+			lengthScore*0.01 + pageRank*0.008 + freshnessScore*0.002)
 
 		if totalScore > 0 {
 			snippet := se.generateAdvancedSnippet(doc.Content, queryTerms, 200)
@@ -349,14 +385,32 @@ func (se *SearchEngine) calculateTextScore(queryTerms []string, text string, wei
 	score := 0.0
 	totalWords := float64(len(words))
 
+	k1 := 1.5
+	b := 0.75
+	avgDocLength := 100.0
+
 	for _, term := range queryTerms {
 		if count, exists := wordCount[term]; exists {
-			tf := float64(count) / totalWords
+			tf := float64(count)
+
 			idf := se.calculateTermWeight(term)
-			tfidf := tf * idf
+			if idf == 0 {
+				idf = 1.0
+			}
+
+			bm25 := idf * (tf * (k1 + 1)) / (tf + k1*(1-b+b*(totalWords/avgDocLength)))
 
 			positionBoost := se.calculatePositionBoost(term, textLower)
-			score += tfidf * positionBoost
+			exactMatchBoost := 1.0
+			if strings.Contains(textLower, term) {
+				if len(term) > 4 {
+					exactMatchBoost = 1.8
+				} else {
+					exactMatchBoost = 1.3
+				}
+			}
+
+			score += bm25 * positionBoost * exactMatchBoost
 		}
 	}
 
@@ -370,13 +424,21 @@ func (se *SearchEngine) calculatePositionBoost(term, text string) float64 {
 	}
 
 	textLen := float64(len(text))
+	if textLen == 0 {
+		return 1.0
+	}
+
 	position := float64(index) / textLen
 
-	if position < 0.1 {
+	if position < 0.05 {
+		return 4.0
+	} else if position < 0.1 {
 		return 3.0
+	} else if position < 0.2 {
+		return 2.5
 	} else if position < 0.3 {
 		return 2.0
-	} else if position < 0.6 {
+	} else if position < 0.5 {
 		return 1.5
 	}
 
@@ -389,7 +451,18 @@ func (se *SearchEngine) calculateURLScore(queryTerms []string, url string) float
 
 	for _, term := range queryTerms {
 		if strings.Contains(urlLower, term) {
-			score += 2.0
+			pathParts := strings.Split(urlLower, "/")
+			for _, part := range pathParts {
+				if strings.Contains(part, term) {
+					if part == term {
+						score += 3.0
+					} else if strings.HasPrefix(part, term) || strings.HasSuffix(part, term) {
+						score += 2.0
+					} else {
+						score += 1.5
+					}
+				}
+			}
 		}
 	}
 
@@ -398,8 +471,10 @@ func (se *SearchEngine) calculateURLScore(queryTerms []string, url string) float
 	}
 
 	depth := strings.Count(urlLower, "/") - 2
-	if depth < 3 {
-		score += 0.3
+	if depth < 2 {
+		score += 0.5
+	} else if depth < 4 {
+		score += 0.2
 	}
 
 	return score
@@ -413,7 +488,8 @@ func (se *SearchEngine) calculateProximityScore(queryTerms []string, content str
 	contentLower := strings.ToLower(content)
 	words := se.tokenize(contentLower)
 
-	maxProximity := 0.0
+	totalProximity := 0.0
+	pairCount := 0
 
 	for i := 0; i < len(queryTerms); i++ {
 		for j := i + 1; j < len(queryTerms); j++ {
@@ -423,16 +499,24 @@ func (se *SearchEngine) calculateProximityScore(queryTerms []string, content str
 			pos2 := se.findWordPositions(words, term2)
 
 			minDistance := se.findMinDistance(pos1, pos2)
-			if minDistance > 0 && minDistance < 15 {
-				proximity := 2.0 / float64(minDistance)
-				if proximity > maxProximity {
-					maxProximity = proximity
+			if minDistance > 0 {
+				if minDistance <= 3 {
+					totalProximity += 3.0
+				} else if minDistance <= 8 {
+					totalProximity += 2.0 / float64(minDistance)
+				} else if minDistance <= 20 {
+					totalProximity += 1.0 / float64(minDistance)
 				}
+				pairCount++
 			}
 		}
 	}
 
-	return maxProximity
+	if pairCount == 0 {
+		return 0
+	}
+
+	return totalProximity / float64(pairCount)
 }
 
 func (se *SearchEngine) findWordPositions(words []string, term string) []int {
@@ -666,4 +750,40 @@ func (se *SearchEngine) limitResults(results []SearchResult, maxResults int) []S
 		return results
 	}
 	return results[:maxResults]
+}
+
+func (se *SearchEngine) calculateQueryMatchScore(queryTerms []string, title, content string) float64 {
+	titleLower := strings.ToLower(title)
+	contentLower := strings.ToLower(content)
+
+	matchCount := 0
+	totalTerms := len(queryTerms)
+
+	for _, term := range queryTerms {
+		if strings.Contains(titleLower, term) || strings.Contains(contentLower, term) {
+			matchCount++
+		}
+	}
+
+	if totalTerms == 0 {
+		return 0
+	}
+
+	return float64(matchCount) / float64(totalTerms)
+}
+
+func (se *SearchEngine) calculateDocumentLengthScore(content string) float64 {
+	length := len(content)
+
+	if length < 100 {
+		return 0.3
+	} else if length < 500 {
+		return 0.7
+	} else if length < 2000 {
+		return 1.0
+	} else if length < 5000 {
+		return 0.8
+	}
+
+	return 0.5
 }

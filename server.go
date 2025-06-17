@@ -32,9 +32,16 @@ func NewServer(port int) *Server {
 	if port == 0 {
 		port = 8080
 	}
+
+	engine := NewSearchEngine()
+	log.Println("Loading search index...")
+	index := LoadIndex()
+	engine.LoadIndex(index)
+	log.Printf("Index loaded with %d terms and %d documents", len(index.Terms), len(index.Docs))
+
 	return &Server{
 		port:   port,
-		engine: NewSearchEngine(),
+		engine: engine,
 	}
 }
 
