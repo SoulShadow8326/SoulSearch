@@ -10,7 +10,15 @@ import (
 	"unicode"
 )
 
-type AdvancedSearchEngine struct {
+type SearchResult struct {
+	URL     string  `json:"url"`
+	Title   string  `json:"title"`
+	Snippet string  `json:"snippet"`
+	Score   float64 `json:"score"`
+	Rank    int     `json:"rank"`
+}
+
+type SearchEngine struct {
 	index      *InvertedIndex
 	stopWords  map[string]bool
 	pageRank   map[string]float64
@@ -21,7 +29,7 @@ type AdvancedSearchEngine struct {
 	totalDocs  int
 }
 
-func NewAdvancedSearchEngine() *AdvancedSearchEngine {
+func NewSearchEngine() *SearchEngine {
 	stopWords := map[string]bool{
 		"the": true, "a": true, "an": true, "and": true, "or": true, "but": true,
 		"in": true, "on": true, "at": true, "to": true, "for": true, "of": true,
@@ -52,8 +60,7 @@ func NewAdvancedSearchEngine() *AdvancedSearchEngine {
 		"swim":     {"float", "paddle", "aquatic", "water"},
 	}
 
-	engine := &AdvancedSearchEngine{
-		index:      LoadIndex(),
+	engine := &SearchEngine{
 		stopWords:  stopWords,
 		pageRank:   make(map[string]float64),
 		linkGraph:  make(map[string][]string),
@@ -63,38 +70,59 @@ func NewAdvancedSearchEngine() *AdvancedSearchEngine {
 		totalDocs:  0,
 	}
 
-	if engine.index != nil {
-		engine.totalDocs = len(engine.index.Docs)
-	}
-
 	return engine
 }
 
-func (ase *AdvancedSearchEngine) Search(query string, maxResults int) []SearchResult {
+func (se *SearchEngine) LoadIndex(index *InvertedIndex) {
+	se.index = index
+	se.totalDocs = len(index.Docs)
+	se.calculateIDF()
+}
+
+func (se *SearchEngine) calculateIDF() {
+	se.idfScores = make(map[string]float64)
+	for term, termFreqs := range se.index.Terms {
+		docCount := len(termFreqs)
+		if docCount > 0 {
+			se.idfScores[term] = math.Log(float64(se.totalDocs) / float64(docCount))
+		}
+	}
+}
+
+func (se *SearchEngine) Search(query string, limit int) ([]SearchResult, string) {
+	start := time.Now()
+
+	results := se.SearchAdvanced(query, limit)
+
+	elapsed := time.Since(start)
+	return results, elapsed.String()
+}
+
+func (se *SearchEngine) SearchAdvanced(query string, maxResults int) []SearchResult {
 	log.Printf("Starting advanced search for query: '%s'", query)
 
-	if ase.index == nil || len(ase.index.Terms) == 0 {
+	if se.index == nil || len(se.index.Terms) == 0 {
 		log.Printf("Index is nil or empty")
 		return nil
 	}
 
 	cacheKey := strings.ToLower(query)
-	if cached, exists := ase.queryCache[cacheKey]; exists {
+	if cached, exists := se.queryCache[cacheKey]; exists {
 		log.Printf("Returning cached results for query: '%s'", query)
-		return ase.limitResults(cached, maxResults)
+		return se.limitResults(cached, maxResults)
 	}
 
-	queryTerms := ase.processAdvancedQuery(query)
+	queryTerms := se.processAdvancedQuery(query)
 	log.Printf("Processed query terms: %v", queryTerms)
 
-	candidates := ase.findAdvancedCandidates(queryTerms)
+	candidates := se.findAdvancedCandidates(queryTerms)
 	log.Printf("Found %d candidates", len(candidates))
 
 	if len(candidates) == 0 {
 		return nil
 	}
 
-	results := ase.scoreAdvancedResults(queryTerms, candidates, query)
+	results := se.scoreAdvancedResults(queryTerms, candidates, query)
 	log.Printf("Scored %d documents", len(results))
 
 	sort.Slice(results, func(i, j int) bool {
@@ -105,16 +133,16 @@ func (ase *AdvancedSearchEngine) Search(query string, maxResults int) []SearchRe
 		results[i].Rank = i + 1
 	}
 
-	ase.queryCache[cacheKey] = results
+	se.queryCache[cacheKey] = results
 	log.Printf("Returning %d results", len(results))
-	return ase.limitResults(results, maxResults)
+	return se.limitResults(results, maxResults)
 }
 
-func (ase *AdvancedSearchEngine) processAdvancedQuery(query string) []string {
+func (se *SearchEngine) processAdvancedQuery(query string) []string {
 	query = strings.ToLower(query)
 
-	phrases := ase.extractPhrases(query)
-	terms := ase.tokenize(query)
+	phrases := se.extractPhrases(query)
+	terms := se.tokenize(query)
 
 	var allTerms []string
 
@@ -123,26 +151,26 @@ func (ase *AdvancedSearchEngine) processAdvancedQuery(query string) []string {
 	}
 
 	for _, term := range terms {
-		if !ase.stopWords[term] && len(term) > 1 {
+		if !se.stopWords[term] && len(term) > 1 {
 			allTerms = append(allTerms, term)
 
-			if synonyms, exists := ase.synonyms[term]; exists {
+			if synonyms, exists := se.synonyms[term]; exists {
 				for _, synonym := range synonyms {
 					allTerms = append(allTerms, synonym)
 				}
 			}
 
-			stemmed := ase.stemWord(term)
+			stemmed := se.stemWord(term)
 			if stemmed != term && len(stemmed) > 2 {
 				allTerms = append(allTerms, stemmed)
 			}
 		}
 	}
 
-	return ase.removeDuplicates(allTerms)
+	return se.removeDuplicates(allTerms)
 }
 
-func (ase *AdvancedSearchEngine) extractPhrases(query string) []string {
+func (se *SearchEngine) extractPhrases(query string) []string {
 	var phrases []string
 
 	re := regexp.MustCompile(`"([^"]+)"`)
@@ -157,7 +185,7 @@ func (ase *AdvancedSearchEngine) extractPhrases(query string) []string {
 	return phrases
 }
 
-func (ase *AdvancedSearchEngine) tokenize(text string) []string {
+func (se *SearchEngine) tokenize(text string) []string {
 	var words []string
 	var currentWord strings.Builder
 
@@ -179,7 +207,7 @@ func (ase *AdvancedSearchEngine) tokenize(text string) []string {
 	return words
 }
 
-func (ase *AdvancedSearchEngine) stemWord(word string) string {
+func (se *SearchEngine) stemWord(word string) string {
 	if len(word) <= 3 {
 		return word
 	}
@@ -199,13 +227,13 @@ func (ase *AdvancedSearchEngine) stemWord(word string) string {
 	return word
 }
 
-func (ase *AdvancedSearchEngine) findAdvancedCandidates(queryTerms []string) map[string]bool {
+func (se *SearchEngine) findAdvancedCandidates(queryTerms []string) map[string]bool {
 	candidates := make(map[string]bool)
 	termScores := make(map[string]float64)
 
 	for _, term := range queryTerms {
-		if docList, exists := ase.index.Terms[term]; exists {
-			weight := ase.calculateTermWeight(term)
+		if docList, exists := se.index.Terms[term]; exists {
+			weight := se.calculateTermWeight(term)
 
 			for _, termFreq := range docList {
 				candidates[termFreq.URL] = true
@@ -215,7 +243,7 @@ func (ase *AdvancedSearchEngine) findAdvancedCandidates(queryTerms []string) map
 	}
 
 	if len(candidates) > 100 {
-		threshold := ase.calculateThreshold(termScores)
+		threshold := se.calculateThreshold(termScores)
 
 		filteredCandidates := make(map[string]bool)
 		for url := range candidates {
@@ -229,27 +257,27 @@ func (ase *AdvancedSearchEngine) findAdvancedCandidates(queryTerms []string) map
 	return candidates
 }
 
-func (ase *AdvancedSearchEngine) calculateTermWeight(term string) float64 {
-	if idf, exists := ase.idfScores[term]; exists {
+func (se *SearchEngine) calculateTermWeight(term string) float64 {
+	if idf, exists := se.idfScores[term]; exists {
 		return idf
 	}
 
-	docFreq := len(ase.index.Terms[term])
+	docFreq := len(se.index.Terms[term])
 	if docFreq == 0 {
 		return 0
 	}
 
-	totalDocs := float64(ase.totalDocs)
+	totalDocs := float64(se.totalDocs)
 	if totalDocs == 0 {
-		totalDocs = float64(len(ase.index.Docs))
+		totalDocs = float64(len(se.index.Docs))
 	}
 
 	idf := math.Log(totalDocs/float64(docFreq)) + 1
-	ase.idfScores[term] = idf
+	se.idfScores[term] = idf
 	return idf
 }
 
-func (ase *AdvancedSearchEngine) calculateThreshold(termScores map[string]float64) float64 {
+func (se *SearchEngine) calculateThreshold(termScores map[string]float64) float64 {
 	if len(termScores) == 0 {
 		return 0
 	}
@@ -269,23 +297,23 @@ func (ase *AdvancedSearchEngine) calculateThreshold(termScores map[string]float6
 	return scores[percentile]
 }
 
-func (ase *AdvancedSearchEngine) scoreAdvancedResults(queryTerms []string, candidates map[string]bool, originalQuery string) []SearchResult {
+func (se *SearchEngine) scoreAdvancedResults(queryTerms []string, candidates map[string]bool, originalQuery string) []SearchResult {
 	var results []SearchResult
 
 	for url := range candidates {
-		doc, exists := ase.index.Docs[url]
+		doc, exists := se.index.Docs[url]
 		if !exists {
 			continue
 		}
 
-		titleScore := ase.calculateTextScore(queryTerms, doc.Title, 4.0)
-		urlScore := ase.calculateURLScore(queryTerms, doc.URL)
-		contentScore := ase.calculateTextScore(queryTerms, doc.Content, 1.0)
+		titleScore := se.calculateTextScore(queryTerms, doc.Title, 4.0)
+		urlScore := se.calculateURLScore(queryTerms, doc.URL)
+		contentScore := se.calculateTextScore(queryTerms, doc.Content, 1.0)
 
-		proximityScore := ase.calculateProximityScore(queryTerms, doc.Content)
-		phraseScore := ase.calculatePhraseScore(originalQuery, doc.Content, doc.Title)
+		proximityScore := se.calculateProximityScore(queryTerms, doc.Content)
+		phraseScore := se.calculatePhraseScore(originalQuery, doc.Content, doc.Title)
 
-		pageRank := ase.getPageRank(doc.URL)
+		pageRank := se.getPageRank(doc.URL)
 		freshnessScore := 0.5
 
 		totalScore := (titleScore*0.35 + urlScore*0.1 + contentScore*0.3 +
@@ -293,18 +321,13 @@ func (ase *AdvancedSearchEngine) scoreAdvancedResults(queryTerms []string, candi
 			pageRank*0.03 + freshnessScore*0.02)
 
 		if totalScore > 0 {
-			snippet := ase.generateAdvancedSnippet(doc.Content, queryTerms, 200)
+			snippet := se.generateAdvancedSnippet(doc.Content, queryTerms, 200)
 
 			result := SearchResult{
-				URL:            doc.URL,
-				Title:          doc.Title,
-				Snippet:        snippet,
-				Score:          totalScore,
-				TitleScore:     titleScore,
-				URLScore:       urlScore,
-				ContentScore:   contentScore,
-				PageRank:       pageRank,
-				FreshnessScore: freshnessScore,
+				URL:     doc.URL,
+				Title:   doc.Title,
+				Snippet: snippet,
+				Score:   totalScore,
 			}
 
 			results = append(results, result)
@@ -314,13 +337,13 @@ func (ase *AdvancedSearchEngine) scoreAdvancedResults(queryTerms []string, candi
 	return results
 }
 
-func (ase *AdvancedSearchEngine) calculateTextScore(queryTerms []string, text string, weight float64) float64 {
+func (se *SearchEngine) calculateTextScore(queryTerms []string, text string, weight float64) float64 {
 	if text == "" {
 		return 0
 	}
 
 	textLower := strings.ToLower(text)
-	words := ase.tokenize(textLower)
+	words := se.tokenize(textLower)
 	wordCount := make(map[string]int)
 
 	for _, word := range words {
@@ -333,10 +356,10 @@ func (ase *AdvancedSearchEngine) calculateTextScore(queryTerms []string, text st
 	for _, term := range queryTerms {
 		if count, exists := wordCount[term]; exists {
 			tf := float64(count) / totalWords
-			idf := ase.calculateTermWeight(term)
+			idf := se.calculateTermWeight(term)
 			tfidf := tf * idf
 
-			positionBoost := ase.calculatePositionBoost(term, textLower)
+			positionBoost := se.calculatePositionBoost(term, textLower)
 			score += tfidf * positionBoost
 		}
 	}
@@ -344,7 +367,7 @@ func (ase *AdvancedSearchEngine) calculateTextScore(queryTerms []string, text st
 	return score * weight
 }
 
-func (ase *AdvancedSearchEngine) calculatePositionBoost(term, text string) float64 {
+func (se *SearchEngine) calculatePositionBoost(term, text string) float64 {
 	index := strings.Index(text, term)
 	if index == -1 {
 		return 1.0
@@ -364,7 +387,7 @@ func (ase *AdvancedSearchEngine) calculatePositionBoost(term, text string) float
 	return 1.0
 }
 
-func (ase *AdvancedSearchEngine) calculateURLScore(queryTerms []string, url string) float64 {
+func (se *SearchEngine) calculateURLScore(queryTerms []string, url string) float64 {
 	urlLower := strings.ToLower(url)
 	score := 0.0
 
@@ -386,13 +409,13 @@ func (ase *AdvancedSearchEngine) calculateURLScore(queryTerms []string, url stri
 	return score
 }
 
-func (ase *AdvancedSearchEngine) calculateProximityScore(queryTerms []string, content string) float64 {
+func (se *SearchEngine) calculateProximityScore(queryTerms []string, content string) float64 {
 	if len(queryTerms) < 2 {
 		return 0
 	}
 
 	contentLower := strings.ToLower(content)
-	words := ase.tokenize(contentLower)
+	words := se.tokenize(contentLower)
 
 	maxProximity := 0.0
 
@@ -400,10 +423,10 @@ func (ase *AdvancedSearchEngine) calculateProximityScore(queryTerms []string, co
 		for j := i + 1; j < len(queryTerms); j++ {
 			term1, term2 := queryTerms[i], queryTerms[j]
 
-			pos1 := ase.findWordPositions(words, term1)
-			pos2 := ase.findWordPositions(words, term2)
+			pos1 := se.findWordPositions(words, term1)
+			pos2 := se.findWordPositions(words, term2)
 
-			minDistance := ase.findMinDistance(pos1, pos2)
+			minDistance := se.findMinDistance(pos1, pos2)
 			if minDistance > 0 && minDistance < 15 {
 				proximity := 2.0 / float64(minDistance)
 				if proximity > maxProximity {
@@ -416,7 +439,7 @@ func (ase *AdvancedSearchEngine) calculateProximityScore(queryTerms []string, co
 	return maxProximity
 }
 
-func (ase *AdvancedSearchEngine) findWordPositions(words []string, term string) []int {
+func (se *SearchEngine) findWordPositions(words []string, term string) []int {
 	var positions []int
 	for i, word := range words {
 		if word == term {
@@ -426,7 +449,7 @@ func (ase *AdvancedSearchEngine) findWordPositions(words []string, term string) 
 	return positions
 }
 
-func (ase *AdvancedSearchEngine) findMinDistance(pos1, pos2 []int) int {
+func (se *SearchEngine) findMinDistance(pos1, pos2 []int) int {
 	if len(pos1) == 0 || len(pos2) == 0 {
 		return -1
 	}
@@ -445,8 +468,8 @@ func (ase *AdvancedSearchEngine) findMinDistance(pos1, pos2 []int) int {
 	return minDist
 }
 
-func (ase *AdvancedSearchEngine) calculatePhraseScore(originalQuery, content, title string) float64 {
-	phrases := ase.extractPhrases(originalQuery)
+func (se *SearchEngine) calculatePhraseScore(originalQuery, content, title string) float64 {
+	phrases := se.extractPhrases(originalQuery)
 	if len(phrases) == 0 {
 		return 0
 	}
@@ -467,8 +490,8 @@ func (ase *AdvancedSearchEngine) calculatePhraseScore(originalQuery, content, ti
 	return score
 }
 
-func (ase *AdvancedSearchEngine) getPageRank(url string) float64 {
-	if rank, exists := ase.pageRank[url]; exists {
+func (se *SearchEngine) getPageRank(url string) float64 {
+	if rank, exists := se.pageRank[url]; exists {
 		return rank
 	}
 
@@ -487,7 +510,7 @@ func (ase *AdvancedSearchEngine) getPageRank(url string) float64 {
 	return 0.4
 }
 
-func (ase *AdvancedSearchEngine) calculateFreshnessScore(timestamp string) float64 {
+func (se *SearchEngine) calculateFreshnessScore(timestamp string) float64 {
 	if timestamp == "" {
 		return 0.4
 	}
@@ -512,13 +535,13 @@ func (ase *AdvancedSearchEngine) calculateFreshnessScore(timestamp string) float
 	return 0.3
 }
 
-func (ase *AdvancedSearchEngine) generateAdvancedSnippet(content string, queryTerms []string, maxLength int) string {
+func (se *SearchEngine) generateAdvancedSnippet(content string, queryTerms []string, maxLength int) string {
 	if content == "" {
 		return "No content available"
 	}
 
-	sentences := ase.splitIntoSentences(content)
-	bestSentences := ase.findBestSentences(sentences, queryTerms, 2)
+	sentences := se.splitIntoSentences(content)
+	bestSentences := se.findBestSentences(sentences, queryTerms, 2)
 
 	snippet := strings.Join(bestSentences, " ")
 
@@ -538,12 +561,12 @@ func (ase *AdvancedSearchEngine) generateAdvancedSnippet(content string, queryTe
 		snippet = truncated + "..."
 	}
 
-	snippet = ase.highlightTerms(snippet, queryTerms)
+	snippet = se.highlightTerms(snippet, queryTerms)
 
 	return snippet
 }
 
-func (ase *AdvancedSearchEngine) splitIntoSentences(text string) []string {
+func (se *SearchEngine) splitIntoSentences(text string) []string {
 	re := regexp.MustCompile(`[.!?]+\s+`)
 	sentences := re.Split(text, -1)
 
@@ -558,7 +581,7 @@ func (ase *AdvancedSearchEngine) splitIntoSentences(text string) []string {
 	return result
 }
 
-func (ase *AdvancedSearchEngine) findBestSentences(sentences []string, queryTerms []string, maxSentences int) []string {
+func (se *SearchEngine) findBestSentences(sentences []string, queryTerms []string, maxSentences int) []string {
 	type sentenceScore struct {
 		sentence string
 		score    float64
@@ -613,7 +636,7 @@ func (ase *AdvancedSearchEngine) findBestSentences(sentences []string, queryTerm
 	return result
 }
 
-func (ase *AdvancedSearchEngine) highlightTerms(text string, queryTerms []string) string {
+func (se *SearchEngine) highlightTerms(text string, queryTerms []string) string {
 	result := text
 
 	for _, term := range queryTerms {
@@ -628,7 +651,7 @@ func (ase *AdvancedSearchEngine) highlightTerms(text string, queryTerms []string
 	return result
 }
 
-func (ase *AdvancedSearchEngine) removeDuplicates(slice []string) []string {
+func (se *SearchEngine) removeDuplicates(slice []string) []string {
 	keys := make(map[string]bool)
 	var result []string
 
@@ -642,7 +665,7 @@ func (ase *AdvancedSearchEngine) removeDuplicates(slice []string) []string {
 	return result
 }
 
-func (ase *AdvancedSearchEngine) limitResults(results []SearchResult, maxResults int) []SearchResult {
+func (se *SearchEngine) limitResults(results []SearchResult, maxResults int) []SearchResult {
 	if len(results) <= maxResults {
 		return results
 	}
