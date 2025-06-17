@@ -11,7 +11,7 @@ import (
 
 type Server struct {
 	port   int
-	engine *SearchEngine
+	engine *AdvancedSearchEngine
 }
 
 type SearchRequest struct {
@@ -34,7 +34,7 @@ func NewServer(port int) *Server {
 	}
 	return &Server{
 		port:   port,
-		engine: NewSearchEngine(),
+		engine: NewAdvancedSearchEngine(),
 	}
 }
 
@@ -150,6 +150,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("Sending response with %d results", len(response.Results))
+
+	for i, result := range response.Results {
+		log.Printf("Result %d: URL=%s, Title=%s, Snippet=%s, Score=%.4f",
+			i+1, result.URL, result.Title, result.Snippet, result.Score)
+	}
+
 	json.NewEncoder(w).Encode(response)
 }
 

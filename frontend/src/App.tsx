@@ -98,6 +98,74 @@ const AbstractBackground: React.FC = () => {
   );
 };
 
+const SearchBackground: React.FC = () => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const resizeCanvas = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    let time = 0;
+
+    const animate = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      time += 0.005;
+      
+      ctx.fillStyle = '#2977F5';
+
+      ctx.beginPath();
+      ctx.moveTo(0, canvas.height);
+      for (let x = 0; x <= canvas.width; x += 20) {
+        const height = 120 + Math.sin(x * 0.008 + time * 0.8) * 40 + Math.cos(x * 0.012 + time * 0.6) * 25;
+        ctx.lineTo(x, canvas.height - height);
+      }
+      ctx.lineTo(canvas.width, canvas.height);
+      ctx.closePath();
+      ctx.fill();
+
+      animationIdRef.current = requestAnimationFrame(animate);
+    };
+
+    animate();
+
+    return () => {
+      window.removeEventListener('resize', resizeCanvas);
+      if (animationIdRef.current) {
+        cancelAnimationFrame(animationIdRef.current);
+      }
+    };
+  }, []);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="abstract-canvas"
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        zIndex: 1
+      }}
+    />
+  );
+};
+
 function App() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -182,12 +250,13 @@ function App() {
     console.log('Rendering search view with results:', results, 'length:', results?.length);
     return (
       <div className="search-results-page">
-        <AbstractBackground />
+        <SearchBackground />
         <div className="search-header">
           <div className="search-header-content">
             <div className="logo-small" onClick={goHome}>SoulSearch</div>
-            <form onSubmit={handleSearch} className="search-form-header">
-              <div className="search-box-header">
+            <div className="search-center-container">
+              <form onSubmit={handleSearch} className="search-form-header">
+                <div className="search-box-header">
                 <Search className="search-icon-header" size={16} />
                 <input
                   type="text"
@@ -206,6 +275,7 @@ function App() {
                 </button>
               </div>
             </form>
+            </div>
             <div className="header-icons">
               <Settings size={20} className="header-icon" />
               <MoreVertical size={20} className="header-icon" />
@@ -230,20 +300,23 @@ function App() {
 
           <div className="results-list">
             {results && results.length > 0 ? (
-              results.map((result, index) => (
+              results.map((result, index) => {
+                console.log('Rendering result:', index, result);
+                return (
                 <div key={index} className="result-item">
                   <div className="result-header">
                     <Globe size={16} className="globe-icon" />
-                    <span className="result-url">{formatURL(result.url)}</span>
+                    <span className="result-url">{formatURL(result.url) || 'No URL'}</span>
                   </div>
                   <h3 className="result-title">
                     <a href={result.url} target="_blank" rel="noopener noreferrer">
-                      {result.title}
+                      {result.title || 'No Title'}
                     </a>
                   </h3>
-                  <p className="result-snippet">{result.snippet}</p>
+                  <p className="result-snippet">{result.snippet || 'No snippet available'}</p>
                 </div>
-              ))
+                );
+              })
             ) : (
               <div className="no-results">
                 <Search size={48} className="no-results-icon" />
