@@ -34,18 +34,7 @@ type Indexer struct {
 }
 
 func NewIndexer() *Indexer {
-	stopWords := map[string]bool{
-		"the": true, "a": true, "an": true, "and": true, "or": true, "but": true,
-		"in": true, "on": true, "at": true, "to": true, "for": true, "of": true,
-		"with": true, "by": true, "is": true, "are": true, "was": true, "were": true,
-		"be": true, "been": true, "have": true, "has": true, "had": true, "do": true,
-		"does": true, "did": true, "will": true, "would": true, "could": true, "should": true,
-		"may": true, "might": true, "must": true, "can": true, "this": true, "that": true,
-		"these": true, "those": true, "i": true, "you": true, "he": true, "she": true,
-		"it": true, "we": true, "they": true, "me": true, "him": true, "her": true,
-		"us": true, "them": true, "my": true, "your": true, "his": true, "its": true,
-		"our": true, "their": true,
-	}
+	stopWords := loadIndexerStopWords()
 
 	return &Indexer{
 		index: &InvertedIndex{
@@ -158,8 +147,13 @@ func (idx *Indexer) processDocument(doc Document) {
 	termFreqs := make(map[string]int)
 
 	for _, word := range words {
-		if !idx.stopWords[word] && len(word) > 2 {
+		if !idx.stopWords[word] && len(word) > 1 {
 			termFreqs[word]++
+
+			stemmed := idx.stemWord(word)
+			if stemmed != word && len(stemmed) > 1 {
+				termFreqs[stemmed]++
+			}
 		}
 	}
 
@@ -237,6 +231,26 @@ func (idx *Indexer) saveIndex() {
 	}
 }
 
+func (idx *Indexer) stemWord(word string) string {
+	if len(word) <= 2 {
+		return word
+	}
+
+	suffixes := []string{"ing", "ed", "er", "est", "ly", "tion", "sion", "ness", "ment", "able", "ible", "ous", "ful", "less", "ish", "ive", "al", "ic", "ical", "ate", "ize", "ise", "ity", "ous", "ive"}
+
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(word, suffix) && len(word) > len(suffix)+1 {
+			return word[:len(word)-len(suffix)]
+		}
+	}
+
+	if strings.HasSuffix(word, "s") && len(word) > 2 && !strings.HasSuffix(word, "ss") && !strings.HasSuffix(word, "us") {
+		return word[:len(word)-1]
+	}
+
+	return word
+}
+
 func LoadIndex() *InvertedIndex {
 	index := &InvertedIndex{
 		Terms: make(map[string][]TermFreq),
@@ -293,4 +307,28 @@ func LoadIndex() *InvertedIndex {
 	}
 
 	return index
+}
+
+func loadIndexerStopWords() map[string]bool {
+	stopWords := make(map[string]bool)
+
+	file, err := os.Open("data/stopwords.txt")
+	if err != nil {
+		return map[string]bool{
+			"the": true, "a": true, "an": true, "and": true, "or": true, "but": true,
+			"in": true, "on": true, "at": true, "to": true, "for": true, "of": true,
+			"with": true, "by": true,
+		}
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		word := strings.TrimSpace(strings.ToLower(scanner.Text()))
+		if word != "" {
+			stopWords[word] = true
+		}
+	}
+
+	return stopWords
 }

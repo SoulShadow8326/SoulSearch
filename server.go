@@ -50,6 +50,7 @@ func (s *Server) Start() {
 	http.HandleFunc("/api/health", s.handleHealth)
 	http.HandleFunc("/api/crawl", s.handleCrawl)
 	http.HandleFunc("/api/index", s.handleIndex)
+	http.HandleFunc("/api/analytics", s.handleAnalytics)
 
 	// Serve static files from frontend/build
 	fs := http.FileServer(http.Dir("./frontend/build"))
@@ -152,18 +153,18 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		req.Limit = 10
 	}
 
-	results, timeTaken := s.engine.Search(req.Query, req.Limit)
+	results, total, timeTaken := s.engine.SearchPaginated(req.Query, req.Page, req.Limit)
 
-	log.Printf("Search completed in %s, found %d results", timeTaken, len(results))
+	log.Printf("Search completed in %s, found %d results on page %d of total %d", timeTaken, len(results), req.Page, total)
 
-	totalPages := (len(results) + req.Limit - 1) / req.Limit
+	totalPages := (total + req.Limit - 1) / req.Limit
 	if totalPages == 0 {
 		totalPages = 1
 	}
 
 	response := SearchResponse{
 		Results:    results,
-		Total:      len(results),
+		Total:      total,
 		Page:       req.Page,
 		TotalPages: totalPages,
 		TimeTaken:  timeTaken,
@@ -243,4 +244,17 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		"status": "indexing started",
 	}
 	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	analytics := s.engine.GetAnalytics()
+	json.NewEncoder(w).Encode(analytics)
 }

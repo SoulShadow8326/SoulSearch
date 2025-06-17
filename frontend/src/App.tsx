@@ -173,6 +173,7 @@ function App() {
   const [timeTaken, setTimeTaken] = useState('');
   const [totalResults, setTotalResults] = useState(0);
   const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const [hasSearched, setHasSearched] = useState(false);
   const [searchView, setSearchView] = useState(false);
 
@@ -202,7 +203,9 @@ function App() {
         console.log('Search response data:', data);
         setResults(data.results || []);
         setTotalResults(data.total || 0);
+        setTotalPages(data.total_pages || 1);
         setTimeTaken(data.time_taken || '');
+        setPage(pageNum);
         setHasSearched(true);
         setSearchView(true);
         console.log('Updated state - results:', data.results?.length, 'searchView:', true);
@@ -223,6 +226,7 @@ function App() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    setPage(1);
     searchAPI(query, 1);
   };
 
@@ -236,6 +240,25 @@ function App() {
     setSearchView(false);
     setQuery('');
     setResults([]);
+    setPage(1);
+  };
+
+  const goToPage = (pageNum: number) => {
+    if (pageNum >= 1 && pageNum <= totalPages) {
+      searchAPI(query, pageNum);
+    }
+  };
+
+  const nextPage = () => {
+    if (page < totalPages) {
+      goToPage(page + 1);
+    }
+  };
+
+  const prevPage = () => {
+    if (page > 1) {
+      goToPage(page - 1);
+    }
   };
 
   const formatURL = (url: string) => {
@@ -335,6 +358,20 @@ function App() {
               </div>
             )}
           </div>
+
+          {totalPages > 1 && (
+            <div className="pagination">
+              <button className="page-button" onClick={prevPage} disabled={page === 1}>
+                &lt; Prev
+              </button>
+              <span className="current-page">
+                Page {page} of {totalPages}
+              </span>
+              <button className="page-button" onClick={nextPage} disabled={page === totalPages}>
+                Next &gt;
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );

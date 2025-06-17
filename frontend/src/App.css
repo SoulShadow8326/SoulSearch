@@ -420,6 +420,7 @@ body {
   transform: translateY(-2px);
   box-shadow: 0 8px 20px rgba(41, 119, 245, 0.15);
   border-left: 4px solid #2977F5;
+  padding-left: 8px;
 }
 
 .result-header {
@@ -542,6 +543,70 @@ body {
   100% { transform: rotate(360deg); }
 }
 
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin: 32px 0;
+  padding: 16px;
+}
+
+.page-button {
+  background: #4285f4;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.page-button:hover:not(:disabled) {
+  background: #3367d6;
+  transform: translateY(-1px);
+}
+
+.page-button:disabled {
+  background: #e8eaed;
+  color: #70757a;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.current-page {
+  font-size: 14px;
+  color: #5f6368;
+  font-weight: 500;
+}
+
+.page-numbers {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.page-number {
+  background: transparent;
+  color: #4285f4;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.page-number:hover {
+  background: #f8f9fa;
+}
+
+.page-number.current {
+  background: #4285f4;
+  color: white;
+}
+
 @media (max-width: 768px) {
   .home-container {
     max-width: 90%;
@@ -575,6 +640,21 @@ body {
   .search-input {
     font-size: 16px;
     padding: 16px 60px 16px 56px;
+  }
+  
+  .pagination {
+    gap: 8px;
+    margin: 16px 0;
+    padding: 8px;
+  }
+  
+  .page-button {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+  
+  .current-page {
+    font-size: 12px;
   }
 }
 
