@@ -18,26 +18,6 @@ interface SearchResponse {
   time_taken: string;
 }
 
-interface Star {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  size: number;
-  brightness: number;
-  color: string;
-}
-
-interface Shape {
-  x: number;
-  y: number;
-  size: number;
-  rotation: number;
-  speed: number;
-  type: number;
-}
-
-// Constellation Canvas Component
 const AbstractBackground: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationIdRef = useRef<number | null>(null);
@@ -57,85 +37,36 @@ const AbstractBackground: React.FC = () => {
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
-    const people = [
-      { x: 150, speed: 0.3, direction: 1 },
-      { x: 400, speed: 0.2, direction: -1 },
-      { x: 650, speed: 0.4, direction: 1 }
-    ];
-
-    let zipLineCart = { x: 50, speed: 1.5 };
+    let time = 0;
 
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
+      time += 0.005;
+      
       ctx.fillStyle = '#2977F5';
 
-      // Draw smooth mountains extending to top
+      // Draw top mountains with slow movement
       ctx.beginPath();
-      ctx.moveTo(0, canvas.height);
-      
-      for (let x = 0; x <= canvas.width; x += 40) {
-        const height = canvas.height * 0.3 + Math.sin(x * 0.005) * canvas.height * 0.2 + Math.cos(x * 0.003) * canvas.height * 0.15;
+      ctx.moveTo(0, 0);
+      for (let x = 0; x <= canvas.width; x += 20) {
+        const height = 80 + Math.sin(x * 0.01 + time) * 30 + Math.cos(x * 0.015 + time * 0.7) * 20;
         ctx.lineTo(x, height);
       }
-      
       ctx.lineTo(canvas.width, 0);
-      ctx.lineTo(0, 0);
       ctx.closePath();
       ctx.fill();
 
-      // Draw houses on mountain slopes
-      const housePositions = [120, 280, 420, 580, 720];
-      housePositions.forEach(x => {
-        if (x < canvas.width) {
-          const groundY = canvas.height * 0.3 + Math.sin(x * 0.005) * canvas.height * 0.2 + Math.cos(x * 0.003) * canvas.height * 0.15;
-          ctx.fillRect(x, groundY, 30, 20);
-          ctx.fillRect(x + 5, groundY - 15, 20, 15);
-        }
-      });
-
-      // Draw trees
-      const treePositions = [100, 200, 350, 500, 650];
-      treePositions.forEach(x => {
-        if (x < canvas.width) {
-          const groundY = canvas.height * 0.3 + Math.sin(x * 0.005) * canvas.height * 0.2 + Math.cos(x * 0.003) * canvas.height * 0.15;
-          ctx.fillRect(x - 2, groundY - 15, 4, 15);
-          ctx.beginPath();
-          ctx.arc(x, groundY - 15, 8, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      });
-
-      // Draw zip line
-      ctx.strokeStyle = '#2977F5';
-      ctx.lineWidth = 2;
+      // Draw bottom mountains with slow movement
       ctx.beginPath();
-      ctx.moveTo(100, canvas.height * 0.2);
-      ctx.lineTo(canvas.width - 100, canvas.height * 0.5);
-      ctx.stroke();
-
-      // Draw zip line cart (slower)
-      const lineProgress = (zipLineCart.x - 100) / (canvas.width - 200);
-      const cartY = canvas.height * 0.2 + lineProgress * (canvas.height * 0.3);
-      ctx.fillRect(zipLineCart.x, cartY - 3, 6, 6);
-
-      zipLineCart.x += zipLineCart.speed * 0.3;
-      if (zipLineCart.x > canvas.width - 100) {
-        zipLineCart.x = 100;
+      ctx.moveTo(0, canvas.height);
+      for (let x = 0; x <= canvas.width; x += 20) {
+        const height = 120 + Math.sin(x * 0.008 + time * 0.8) * 40 + Math.cos(x * 0.012 + time * 0.6) * 25;
+        ctx.lineTo(x, canvas.height - height);
       }
-
-      // Draw walking people (slower)
-      people.forEach(person => {
-        const groundY = canvas.height * 0.3 + Math.sin(person.x * 0.005) * canvas.height * 0.2 + Math.cos(person.x * 0.003) * canvas.height * 0.15;
-        ctx.fillRect(person.x - 2, groundY - 8, 4, 8);
-        ctx.beginPath();
-        ctx.arc(person.x, groundY - 12, 3, 0, Math.PI * 2);
-        ctx.fill();
-
-        person.x += person.speed * person.direction * 0.5;
-        if (person.x > canvas.width + 10) person.x = -10;
-        if (person.x < -10) person.x = canvas.width + 10;
-      });
+      ctx.lineTo(canvas.width, canvas.height);
+      ctx.closePath();
+      ctx.fill();
 
       animationIdRef.current = requestAnimationFrame(animate);
     };
@@ -180,7 +111,9 @@ function App() {
   const searchAPI = async (searchQuery: string, pageNum: number = 1) => {
     if (!searchQuery.trim()) return;
     
+    console.log('Starting search for:', searchQuery);
     setLoading(true);
+    
     try {
       const response = await fetch('http://localhost:8080/api/search', {
         method: 'POST',
@@ -194,30 +127,34 @@ function App() {
         })
       });
       
+      console.log('Response status:', response.status);
+      
       if (response.ok) {
         const data: SearchResponse = await response.json();
+        console.log('Search response data:', data);
         setResults(data.results || []);
-        setTimeTaken(data.time_taken);
-        setTotalResults(data.total);
+        setTotalResults(data.total || 0);
+        setTimeTaken(data.time_taken || '');
         setHasSearched(true);
         setSearchView(true);
+        console.log('Updated state - results:', data.results?.length, 'searchView:', true);
       } else {
+        console.error('Response not ok:', response.status, response.statusText);
         setResults([]);
-        setHasSearched(true);
         setSearchView(true);
       }
     } catch (error) {
+      console.error('Search failed:', error);
       setResults([]);
-      setHasSearched(true);
       setSearchView(true);
     } finally {
       setLoading(false);
+      console.log('Loading set to false');
     }
   };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    setPage(1);
     searchAPI(query, 1);
   };
 
@@ -227,23 +164,22 @@ function App() {
     }
   };
 
+  const goHome = () => {
+    setSearchView(false);
+    setQuery('');
+    setResults([]);
+  };
+
   const formatURL = (url: string) => {
     try {
-      const urlObj = new URL(url);
-      return urlObj.hostname + urlObj.pathname;
+      return new URL(url).hostname;
     } catch {
       return url;
     }
   };
 
-  const goHome = () => {
-    setSearchView(false);
-    setHasSearched(false);
-    setResults([]);
-    setQuery('');
-  };
-
   if (searchView) {
+    console.log('Rendering search view with results:', results, 'length:', results?.length);
     return (
       <div className="search-results-page">
         <AbstractBackground />
@@ -270,7 +206,7 @@ function App() {
                 </button>
               </div>
             </form>
-            <div className="header-actions">
+            <div className="header-icons">
               <Settings size={20} className="header-icon" />
               <MoreVertical size={20} className="header-icon" />
             </div>
@@ -293,7 +229,7 @@ function App() {
           )}
 
           <div className="results-list">
-            {results.length > 0 ? (
+            {results && results.length > 0 ? (
               results.map((result, index) => (
                 <div key={index} className="result-item">
                   <div className="result-header">

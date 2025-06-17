@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -41,17 +42,26 @@ func NewSearchEngine() *SearchEngine {
 }
 
 func (se *SearchEngine) Search(query string, maxResults int) []SearchResult {
+	log.Printf("Starting search for query: '%s'", query)
+
 	if se.index == nil || len(se.index.Terms) == 0 {
+		log.Printf("Index is nil or empty")
 		return nil
 	}
 
 	queryTerms := se.processQuery(query)
+	log.Printf("Processed query terms: %v", queryTerms)
+
 	if len(queryTerms) == 0 {
+		log.Printf("No valid query terms")
 		return nil
 	}
 
 	candidates := se.findCandidates(queryTerms)
+	log.Printf("Found %d candidates", len(candidates))
+
 	scored := se.scoreDocuments(candidates, queryTerms, query)
+	log.Printf("Scored %d documents", len(scored))
 
 	sort.Slice(scored, func(i, j int) bool {
 		return scored[i].Score > scored[j].Score
@@ -66,6 +76,7 @@ func (se *SearchEngine) Search(query string, maxResults int) []SearchResult {
 		scored[i].Snippet = se.generateSnippet(scored[i].URL, queryTerms)
 	}
 
+	log.Printf("Returning %d results", len(scored))
 	return scored
 }
 
@@ -74,7 +85,7 @@ func (se *SearchEngine) processQuery(query string) []string {
 	var terms []string
 
 	for _, word := range words {
-		if !se.stopWords[word] && len(word) > 2 {
+		if !se.stopWords[word] && len(word) > 1 {
 			terms = append(terms, word)
 		}
 	}

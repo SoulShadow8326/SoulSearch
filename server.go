@@ -4,16 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 )
 
 type Server struct {
-	socketPath string
-	engine     *SearchEngine
+	port   int
+	engine *SearchEngine
 }
 
 type SearchRequest struct {
@@ -31,27 +29,24 @@ type SearchResponse struct {
 }
 
 func NewServer(port int) *Server {
+	if port == 0 {
+		port = 8080
+	}
 	return &Server{
-		socketPath: "/tmp/soulsearch.sock",
-		engine:     NewSearchEngine(),
+		port:   port,
+		engine: NewSearchEngine(),
 	}
 }
 
 func (s *Server) Start() {
-	os.Remove(s.socketPath)
-
-	listener, err := net.Listen("unix", s.socketPath)
-	if err != nil {
-		log.Fatal("Failed to create Unix socket:", err)
-	}
-	defer listener.Close()
-
-	os.Chmod(s.socketPath, 0666)
-
 	http.HandleFunc("/api/search", s.handleSearch)
 	http.HandleFunc("/api/health", s.handleHealth)
 	http.HandleFunc("/api/crawl", s.handleCrawl)
 	http.HandleFunc("/api/index", s.handleIndex)
+
+	// Serve static files from frontend/build
+	fs := http.FileServer(http.Dir("./frontend/build"))
+	http.Handle("/", fs)
 
 	go func() {
 		time.Sleep(2 * time.Second)
@@ -75,11 +70,13 @@ func (s *Server) Start() {
 		indexer.BuildIndex()
 	}()
 
-	fmt.Printf("SoulSearch API running on Unix socket: %s\n", s.socketPath)
-	log.Fatal(http.Serve(listener, nil))
+	fmt.Printf("SoulSearch server running on http://localhost:%d\n", s.port)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", s.port), nil))
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Received search request: %s %s", r.Method, r.URL.Path)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -96,6 +93,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	var req SearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("Failed to decode JSON body: %v", err)
 		query := r.URL.Query().Get("q")
 		if query == "" {
 			http.Error(w, "Query parameter required", http.StatusBadRequest)
@@ -118,6 +116,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	log.Printf("Search request parsed: query='%s', page=%d, limit=%d", req.Query, req.Page, req.Limit)
+
 	if req.Query == "" {
 		http.Error(w, "Query cannot be empty", http.StatusBadRequest)
 		return
@@ -134,6 +134,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	results := s.engine.Search(req.Query, req.Limit)
 	timeTaken := time.Since(start).String()
 
+	log.Printf("Search completed in %s, found %d results", timeTaken, len(results))
+
 	totalPages := (len(results) + req.Limit - 1) / req.Limit
 	if totalPages == 0 {
 		totalPages = 1
@@ -147,6 +149,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		TimeTaken:  timeTaken,
 	}
 
+	log.Printf("Sending response with %d results", len(response.Results))
 	json.NewEncoder(w).Encode(response)
 }
 
