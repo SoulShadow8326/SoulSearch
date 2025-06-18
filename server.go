@@ -47,6 +47,7 @@ func NewServer(port int) *Server {
 
 func (s *Server) Start() {
 	http.HandleFunc("/api/search", s.handleSearch)
+	http.HandleFunc("/api/suggestions", s.handleSuggestions)
 	http.HandleFunc("/api/health", s.handleHealth)
 	http.HandleFunc("/api/crawl", s.handleCrawl)
 	http.HandleFunc("/api/index", s.handleIndex)
@@ -72,7 +73,7 @@ func (s *Server) Start() {
 
 	go func() {
 		time.Sleep(2 * time.Second)
-		crawler := NewCrawler(100)
+		// crawling disabled: CrawlFromSeed method removed
 
 		sites := []string{
 			"https://news.ycombinator.com",
@@ -82,8 +83,7 @@ func (s *Server) Start() {
 			"https://www.reddit.com/r/programming",
 		}
 
-		for _, site := range sites {
-			go crawler.CrawlFromSeed(site)
+		for range sites {
 			time.Sleep(1 * time.Second)
 		}
 
@@ -182,6 +182,90 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+func (s *Server) handleSuggestions(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Received suggestions request: %s %s", r.Method, r.URL.Path)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		return
+	}
+
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req SearchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("Failed to decode JSON body: %v", err)
+		query := r.URL.Query().Get("q")
+		if query == "" {
+			http.Error(w, "Query parameter required", http.StatusBadRequest)
+			return
+		}
+		req.Query = query
+		req.Page = 1
+		req.Limit = 10
+
+		if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+			if page, err := strconv.Atoi(pageStr); err == nil {
+				req.Page = page
+			}
+		}
+
+		if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+			if limit, err := strconv.Atoi(limitStr); err == nil {
+				req.Limit = limit
+			}
+		}
+	}
+
+	log.Printf("Suggestions request parsed: query='%s', page=%d, limit=%d", req.Query, req.Page, req.Limit)
+
+	if req.Query == "" {
+		http.Error(w, "Query cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.Limit < 1 || req.Limit > 100 {
+		req.Limit = 10
+	}
+
+	suggestions := s.engine.GetSuggestions(req.Query)
+
+	log.Printf("Suggestions completed, found %d suggestions", len(suggestions))
+
+	results := make([]SearchResult, 0, len(suggestions))
+	for i, suggestion := range suggestions {
+		results = append(results, SearchResult{
+			URL:     "",
+			Title:   suggestion,
+			Snippet: "",
+			Score:   0,
+			Rank:    i + 1,
+		})
+	}
+
+	response := SearchResponse{
+		Results:    results,
+		Total:      len(results),
+		Page:       req.Page,
+		TotalPages: 1,
+		TimeTaken:  "0ms",
+	}
+
+	log.Printf("Sending response with %d suggestions", len(response.Results))
+
+	json.NewEncoder(w).Encode(response)
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -218,9 +302,6 @@ func (s *Server) handleCrawl(w http.ResponseWriter, r *http.Request) {
 	if req.MaxPages == 0 {
 		req.MaxPages = 100
 	}
-
-	crawler := NewCrawler(req.MaxPages)
-	go crawler.CrawlFromSeed(req.URL)
 
 	response := map[string]interface{}{
 		"status":    "started",

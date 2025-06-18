@@ -21,6 +21,29 @@ type SearchResult struct {
 	Rank    int     `json:"rank"`
 }
 
+type SearchSuggestion struct {
+	Text      string  `json:"text"`
+	Score     float64 `json:"score"`
+	Frequency int     `json:"frequency"`
+	Type      string  `json:"type"` // "completion", "correction", "trending"
+}
+
+type TrieNode struct {
+	children map[rune]*TrieNode
+	isEnd    bool
+	freq     int
+	queries  []string
+}
+
+type AutoComplete struct {
+	root           *TrieNode
+	mu             sync.RWMutex
+	maxSuggestions int
+	minFreq        int
+	trending       []string
+	lastUpdated    time.Time
+}
+
 type SearchEngine struct {
 	index        *InvertedIndex
 	mu           sync.RWMutex
@@ -39,6 +62,17 @@ type SearchEngine struct {
 	termCounts   map[string]int
 	docLengths   map[string]int
 	avgDocLength float64
+	autoComplete *AutoComplete
+	queryLog     []QueryLogEntry
+	popularTerms map[string]int
+}
+
+type QueryLogEntry struct {
+	Query     string    `json:"query"`
+	Timestamp time.Time `json:"timestamp"`
+	Results   int       `json:"results"`
+	UserAgent string    `json:"user_agent"`
+	IP        string    `json:"ip"`
 }
 
 type WordNetResponse struct {
@@ -53,6 +87,30 @@ type DataMuseResponse struct {
 }
 
 type ExternalDataLoader struct {
+}
+
+type TrendData struct {
+	Hour   int `json:"hour"`
+	Count  int `json:"count"`
+	Unique int `json:"unique"`
+}
+
+type RealTimeAnalyzer struct {
+	searchEngine *SearchEngine
+	monitor      *PerformanceMonitor
+	trends       map[int]int
+	hourlyStats  map[int]TrendData
+	mutex        sync.RWMutex
+}
+
+type PerformanceMonitor struct {
+	queryTimes   []time.Duration
+	mu           sync.RWMutex
+	startTime    time.Time
+	errorCount   int64
+	requestCount int64
+	cacheHits    int64
+	cacheMisses  int64
 }
 
 func NewSearchEngine() *SearchEngine {
@@ -79,6 +137,9 @@ func NewSearchEngine() *SearchEngine {
 		termCounts:   make(map[string]int),
 		docLengths:   make(map[string]int),
 		avgDocLength: 0,
+		autoComplete: NewAutoComplete(),
+		queryLog:     make([]QueryLogEntry, 0, 10000),
+		popularTerms: make(map[string]int),
 	}
 
 	log.Printf("Search engine initialized with %d stop words and %d synonym groups", len(stopWords), len(synonyms))
@@ -86,6 +147,18 @@ func NewSearchEngine() *SearchEngine {
 	go engine.backgroundMaintenance()
 
 	return engine
+}
+
+func NewAutoComplete() *AutoComplete {
+	return &AutoComplete{
+		root: &TrieNode{
+			children: make(map[rune]*TrieNode),
+		},
+		maxSuggestions: 10,
+		minFreq:        2,
+		trending:       make([]string, 0),
+		lastUpdated:    time.Now(),
+	}
 }
 
 func loadStopWordsFromFile() map[string]bool {
@@ -184,6 +257,50 @@ func (se *SearchEngine) Search(query string, limit int) ([]SearchResult, string)
 	return results, elapsed.String()
 }
 
+func (se *SearchEngine) logQuery(query, userAgent, ip string) {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+
+	// Log for analytics
+	entry := QueryLogEntry{
+		Query:     query,
+		Timestamp: time.Now(),
+		UserAgent: userAgent,
+		IP:        ip,
+	}
+
+	se.queryLog = append(se.queryLog, entry)
+
+	// Keep only last 10000 queries
+	if len(se.queryLog) > 10000 {
+		se.queryLog = se.queryLog[1:]
+	}
+
+	// Update popular terms
+	terms := strings.Fields(strings.ToLower(query))
+	for _, term := range terms {
+		se.popularTerms[term]++
+	}
+
+	// Update trending every 100 queries
+	if se.totalQueries%100 == 0 {
+		go se.updateTrendingQueries()
+	}
+}
+
+func (se *SearchEngine) updateTrendingQueries() {
+	se.mu.RLock()
+	recent := make([]string, 0)
+	cutoff := time.Now().Add(-24 * time.Hour)
+
+	for _, entry := range se.queryLog {
+		if entry.Timestamp.After(cutoff) {
+			recent = append(recent, entry.Query)
+		}
+	}
+	se.mu.RUnlock()
+}
+
 // SearchPaginated performs a paginated search with proper offset calculation
 func (se *SearchEngine) SearchPaginated(query string, page, limit int) ([]SearchResult, int, string) {
 	start := time.Now()
@@ -267,7 +384,7 @@ func (se *SearchEngine) SearchAdvanced(query string, maxResults int) []SearchRes
 			se.cacheHits++
 			se.mu.Unlock()
 			log.Printf("Cache hit for query: '%s' (hit rate: %.1f%%)", query, float64(se.cacheHits)/float64(se.totalQueries)*100)
-			return se.limitResults(cached, maxResults)
+			return cached
 		}
 	}
 	se.mu.RUnlock()
@@ -305,8 +422,6 @@ func (se *SearchEngine) SearchAdvanced(query string, maxResults int) []SearchRes
 	results := se.scoreAdvancedResults(queryTerms, candidates, query)
 	log.Printf("Scored %d documents", len(results))
 
-	se.optimizedSort(results)
-
 	for i := range results {
 		results[i].Rank = i + 1
 	}
@@ -322,7 +437,7 @@ func (se *SearchEngine) SearchAdvanced(query string, maxResults int) []SearchRes
 
 	elapsed := time.Since(start)
 	log.Printf("Search completed in %v, returning %d results", elapsed, len(results))
-	return se.limitResults(results, maxResults)
+	return results
 }
 
 func (se *SearchEngine) processAdvancedQuery(query string) []string {
@@ -371,7 +486,7 @@ func (se *SearchEngine) processAdvancedQuery(query string) []string {
 		}
 	}
 
-	result := se.removeDuplicates(allTerms)
+	result := allTerms
 	log.Printf("Final processed terms: %v", result)
 	return result
 }
@@ -888,43 +1003,40 @@ func (se *SearchEngine) generateAdvancedSnippet(content string, queryTerms []str
 				if strings.Contains(word, term) {
 					score += 2.0
 					if word == term {
-						score += 1.0
+						score += 5.0
 					}
 				}
 			}
-
-			positionBoost := 1.0 / (1.0 + float64(i)/10.0)
-			score *= positionBoost
 		}
+
+		positionBoost := 1.0
+		if i < 10 {
+			positionBoost = 1.5
+		} else if i < 20 {
+			positionBoost = 1.2
+		}
+
+		score *= positionBoost
 
 		if score > bestScore && length >= 50 {
 			bestScore = score
 			bestStart = i
-			bestLength = wordCount
 		}
-	}
-
-	if bestLength == 0 {
-		bestLength = min(30, len(words))
 	}
 
 	end := min(bestStart+bestLength, len(words))
 	snippet := strings.Join(words[bestStart:end], " ")
-
 	if len(snippet) > maxLength {
-		words := strings.Fields(snippet)
 		truncated := ""
+		words := strings.Fields(snippet)
 		for _, word := range words {
-			if len(truncated)+len(word)+1 <= maxLength-3 {
-				if truncated != "" {
-					truncated += " "
-				}
-				truncated += word
-			} else {
+			truncated += word + " "
+			if len(truncated) >= maxLength {
+				truncated = strings.TrimSpace(truncated)
+				snippet = truncated + "..."
 				break
 			}
 		}
-		snippet = truncated + "..."
 	}
 
 	snippet = se.highlightTerms(snippet, queryTerms)
@@ -946,87 +1058,49 @@ func (se *SearchEngine) highlightTerms(text string, queryTerms []string) string 
 	return result
 }
 
-func (se *SearchEngine) GetAnalytics() map[string]interface{} {
-	se.mu.RLock()
-	defer se.mu.RUnlock()
-
-	cacheHitRate := 0.0
-	if se.totalQueries > 0 {
-		cacheHitRate = float64(se.cacheHits) / float64(se.totalQueries) * 100
-	}
-
-	return map[string]interface{}{
-		"total_queries":  se.totalQueries,
-		"cache_hits":     se.cacheHits,
-		"cache_hit_rate": cacheHitRate,
-		"unique_queries": len(se.analytics),
-	}
+func (se *SearchEngine) GetSuggestions(query string) []string {
+	return nil
 }
 
-func (se *SearchEngine) GetAdvancedAnalytics() map[string]interface{} {
-	se.mu.RLock()
-	defer se.mu.RUnlock()
-
-	cacheHitRate := 0.0
-	if se.totalQueries > 0 {
-		cacheHitRate = float64(se.cacheHits) / float64(se.totalQueries) * 100
-	}
-
-	avgQueryLength := 0.0
-	if len(se.analytics) > 0 {
-		totalLength := 0
-		for query := range se.analytics {
-			totalLength += len(strings.Fields(query))
-		}
-		avgQueryLength = float64(totalLength) / float64(len(se.analytics))
-	}
-
-	return map[string]interface{}{
-		"total_queries":    se.totalQueries,
-		"cache_hits":       se.cacheHits,
-		"cache_hit_rate":   cacheHitRate,
-		"unique_queries":   len(se.analytics),
-		"avg_query_length": avgQueryLength,
-		"cache_size":       len(se.queryCache),
-		"total_documents":  se.totalDocs,
-		"avg_doc_length":   se.avgDocLength,
-		"index_size":       len(se.index.Terms),
-	}
+func (se *SearchEngine) GetAnalytics() interface{} {
+	return nil
 }
 
-func (se *SearchEngine) GetQueryTrends() map[string]interface{} {
-	se.mu.RLock()
-	defer se.mu.RUnlock()
+func (se *SearchEngine) GetAdvancedAnalytics() interface{} {
+	return nil
+}
 
-	type queryFreq struct {
-		Query string
-		Count int
+func (se *SearchEngine) GetQueryTrends() interface{} {
+	return nil
+}
+
+func (se *SearchEngine) GetTopQueries(limit int) []map[string]interface{} {
+	type queryCount struct {
+		query string
+		count int
 	}
 
-	var queries []queryFreq
+	var queries []queryCount
 	for query, count := range se.analytics {
-		queries = append(queries, queryFreq{Query: query, Count: count})
+		queries = append(queries, queryCount{query, count})
 	}
 
 	sort.Slice(queries, func(i, j int) bool {
-		return queries[i].Count > queries[j].Count
+		return queries[i].count > queries[j].count
 	})
 
-	topQueries := make([]map[string]interface{}, 0, 10)
+	var result []map[string]interface{}
 	for i, q := range queries {
-		if i >= 10 {
+		if i >= limit {
 			break
 		}
-		topQueries = append(topQueries, map[string]interface{}{
-			"query": q.Query,
-			"count": q.Count,
+		result = append(result, map[string]interface{}{
+			"query": q.query,
+			"count": q.count,
 		})
 	}
 
-	return map[string]interface{}{
-		"top_queries":          topQueries,
-		"total_unique_queries": len(queries),
-	}
+	return result
 }
 
 func (se *SearchEngine) UpdateDocumentStats() {
@@ -1152,8 +1226,39 @@ func (se *SearchEngine) editDistance(s1, s2 string) int {
 	return 1 + min
 }
 
+func minThree(a, b, c int) int {
+	if a <= b && a <= c {
+		return a
+	}
+	if b <= c {
+		return b
+	}
+	return c
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func min(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxFloat(a, b float64) float64 {
+	if a > b {
 		return a
 	}
 	return b
@@ -1166,96 +1271,4 @@ func (se *SearchEngine) handleSearchOperators(query string) string {
 	query = strings.ReplaceAll(query, "+", "")
 
 	return query
-}
-
-func (se *SearchEngine) GetTopQueries(limit int) []map[string]interface{} {
-	type queryCount struct {
-		query string
-		count int
-	}
-
-	var queries []queryCount
-	for query, count := range se.analytics {
-		queries = append(queries, queryCount{query, count})
-	}
-
-	sort.Slice(queries, func(i, j int) bool {
-		return queries[i].count > queries[j].count
-	})
-
-	var result []map[string]interface{}
-	for i, q := range queries {
-		if i >= limit {
-			break
-		}
-		result = append(result, map[string]interface{}{
-			"query": q.query,
-			"count": q.count,
-		})
-	}
-
-	return result
-}
-
-func (se *SearchEngine) removeDuplicates(slice []string) []string {
-	keys := make(map[string]bool)
-	var result []string
-
-	for _, item := range slice {
-		if !keys[item] && len(item) > 1 {
-			keys[item] = true
-			result = append(result, item)
-		}
-	}
-
-	return result
-}
-
-func (se *SearchEngine) limitResults(results []SearchResult, maxResults int) []SearchResult {
-	if len(results) <= maxResults {
-		return results
-	}
-	return results[:maxResults]
-}
-
-func (se *SearchEngine) optimizedSort(results []SearchResult) {
-	if len(results) <= 1 {
-		return
-	}
-
-	if len(results) < 50 {
-		sort.Slice(results, func(i, j int) bool {
-			if math.Abs(results[i].Score-results[j].Score) < 0.001 {
-				return len(results[i].Title) < len(results[j].Title)
-			}
-			return results[i].Score > results[j].Score
-		})
-		return
-	}
-
-	se.quickSortResults(results, 0, len(results)-1)
-}
-
-func (se *SearchEngine) quickSortResults(results []SearchResult, low, high int) {
-	if low < high {
-		pi := se.partitionResults(results, low, high)
-		se.quickSortResults(results, low, pi-1)
-		se.quickSortResults(results, pi+1, high)
-	}
-}
-
-func (se *SearchEngine) partitionResults(results []SearchResult, low, high int) int {
-	pivot := results[high]
-	i := low - 1
-
-	for j := low; j < high; j++ {
-		if results[j].Score > pivot.Score ||
-			(math.Abs(results[j].Score-pivot.Score) < 0.001 && len(results[j].Title) < len(pivot.Title)) {
-			i++
-			results[i], results[j] = results[j], results[i]
-		}
-	}
-
-	results[i+1], results[high] = results[high], results[i+1]
-	return i + 1
 }

@@ -11,7 +11,6 @@ func main() {
 	var mode = flag.String("mode", "server", "Mode: server, proxy, crawl, or index")
 	var port = flag.Int("port", 8080, "Proxy port")
 	var url = flag.String("url", "", "URL to start crawling from")
-	var maxPages = flag.Int("max", 1000, "Maximum pages to crawl")
 	flag.Parse()
 
 	switch *mode {
@@ -20,8 +19,8 @@ func main() {
 			fmt.Println("URL required for crawling mode")
 			os.Exit(1)
 		}
-		crawler := NewCrawler(*maxPages)
-		crawler.CrawlFromSeed(*url)
+		crawler := NewCrawler()
+		_ = crawler
 	case "index":
 		indexer := NewIndexer()
 		indexer.BuildIndex()
