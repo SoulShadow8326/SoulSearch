@@ -55,18 +55,23 @@ const AbstractBackground: React.FC = () => {
     gradients[2].addColorStop(1, 'rgba(41,119,245,0.32)');
     for (let layer = 0; layer < 3; layer++) {
       ctx.beginPath();
-      ctx.moveTo(xOffset, canvas.height);
-      for (let x = 0; x <= canvas.width; x += 2) {
+      ctx.moveTo(0, canvas.height);
+      const leftYs = [];
+      for (let x = 0; x <= canvas.width / 2; x += 2) {
         const freq = 0.004 + layer * 0.002;
         const amp = 60 + layer * 40;
         const speed = 0.5 + layer * 0.2;
         const y =
           canvas.height - (180 + layer * 60) -
-          Math.sin((x + xOffset) * freq + speed) * amp -
-          Math.cos((x + xOffset) * (freq * 0.7) + speed * 0.7) * (amp * 0.4);
-        ctx.lineTo(x + xOffset, y);
+          Math.sin(x * freq + speed) * amp -
+          Math.cos(x * (freq * 0.7) + speed * 0.7) * (amp * 0.4);
+        ctx.lineTo(x, y);
+        leftYs.push(y);
       }
-      ctx.lineTo(canvas.width + xOffset, canvas.height);
+      for (let i = leftYs.length - 1, x = canvas.width / 2 + 2; x <= canvas.width; x += 2, i--) {
+        ctx.lineTo(x, leftYs[i] !== undefined ? leftYs[i] : leftYs[leftYs.length - 1]);
+      }
+      ctx.lineTo(canvas.width, canvas.height);
       ctx.closePath();
       ctx.fillStyle = gradients[layer];
       ctx.globalAlpha = 0.8 - layer * 0.2;
@@ -74,15 +79,20 @@ const AbstractBackground: React.FC = () => {
       ctx.globalAlpha = 1;
     }
     ctx.beginPath();
-    ctx.moveTo(xOffset, canvas.height);
-    for (let x = 0; x <= canvas.width; x += 2) {
+    ctx.moveTo(0, canvas.height);
+    const leftYs = [];
+    for (let x = 0; x <= canvas.width / 2; x += 2) {
       const y =
         canvas.height - 60 -
-        Math.sin((x + xOffset) * 0.012 + 1.2) * 18 -
-        Math.cos((x + xOffset) * 0.018 + 0.8) * 10;
-      ctx.lineTo(x + xOffset, y);
+        Math.sin(x * 0.012 + 1.2) * 18 -
+        Math.cos(x * 0.018 + 0.8) * 10;
+      ctx.lineTo(x, y);
+      leftYs.push(y);
     }
-    ctx.lineTo(canvas.width + xOffset, canvas.height);
+    for (let i = leftYs.length - 1, x = canvas.width / 2 + 2; x <= canvas.width; x += 2, i--) {
+      ctx.lineTo(x, leftYs[i] !== undefined ? leftYs[i] : leftYs[leftYs.length - 1]);
+    }
+    ctx.lineTo(canvas.width, canvas.height);
     ctx.closePath();
     ctx.fillStyle = 'rgba(24,41,48,0.32)';
     ctx.fill();

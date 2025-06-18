@@ -9,11 +9,7 @@ pkill -f "./soulsearch" 2>/dev/null
 # Build frontend
 echo "Building frontend..."
 cd frontend
-npm run build > /dev/null 2>&1
-if [ $? -ne 0 ]; then
-    echo "Frontend build failed!"
-    exit 1
-fi
+npm start
 cd ..
 
 # Build Go backend
