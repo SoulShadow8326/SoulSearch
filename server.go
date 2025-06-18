@@ -45,6 +45,23 @@ func NewServer(port int) *Server {
 	}
 }
 
+func (s *Server) spaHandler(fs http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" || r.URL.Path == "/favicon.ico" || r.URL.Path == "/manifest.json" || r.URL.Path == "/logo192.png" || r.URL.Path == "/logo512.png" || r.URL.Path == "/robots.txt" || r.URL.Path == "/asset-manifest.json" {
+			fs.ServeHTTP(w, r)
+			return
+		}
+		if len(r.URL.Path) >= 5 && r.URL.Path[:5] == "/api/" {
+			fs.ServeHTTP(w, r)
+			return
+		}
+		// Serve index.html for all other routes (SPA)
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		http.ServeFile(w, r, "./frontend/build/index.html")
+	}
+}
+
 func (s *Server) Start() {
 	http.HandleFunc("/api/search", s.handleSearch)
 	http.HandleFunc("/api/suggestions", s.handleSuggestions)
@@ -55,9 +72,9 @@ func (s *Server) Start() {
 	http.HandleFunc("/api/analytics/advanced", s.handleAdvancedAnalytics)
 	http.HandleFunc("/api/analytics/trends", s.handleQueryTrends)
 
-	// Serve static files from frontend/build
 	fs := http.FileServer(http.Dir("./frontend/build"))
-	http.Handle("/", fs)
+	http.Handle("/static/", fs)
+	http.HandleFunc("/", s.spaHandler(fs))
 
 	fmt.Printf("Starting ExSearch server on http://localhost:%d...\n", s.port)
 	log.Printf("Starting ExSearch HTTP server on port %d", s.port)
