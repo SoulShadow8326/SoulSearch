@@ -3,6 +3,12 @@ import { Search } from 'lucide-react';
 import './App.css';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 
+const getApiBaseUrl = async () => {
+  const res = await fetch('/config.json');
+  const config = await res.json();
+  return config.API_BASE_URL || 'http://localhost:8080';
+};
+
 interface SearchResult {
   url: string;
   title: string;
@@ -239,36 +245,39 @@ function SearchPage({
   goHome,
 }: any) {
   const query = useQueryParam('q');
+  const [input, setInput] = useState(query);
   useEffect(() => {
     if (query) searchAPI(query, 1);
-    // eslint-disable-next-line
   }, [query]);
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (input.trim()) searchAPI(input, 1);
+  };
   return (
     <div className="search-results-page">
-      <div className="results-header">
-        <button onClick={goHome} className="home-button" style={{ background: '#2977F5', color: '#fff', marginBottom: 32 }}>
-          Back to Home
-        </button>
-        <div className="results-info" style={{ color: '#2977F5' }}>
-          {loading ? (
-            <div>Loading...</div>
-          ) : (
-            <div>
-              {totalResults} results found in {timeTaken}
-            </div>
-          )}
-        </div>
+      <AbstractBackground />
+      <div className="search-results-header">
+        <form onSubmit={handleSearch} className="search-form search-form-results">
+          <div className="search-box">
+            <input
+              type="text"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              placeholder="Search..."
+              className="search-input"
+              autoFocus
+            />
+            <button type="submit" className="search-button">
+              <Search size={20} color="#2977F5" />
+            </button>
+          </div>
+        </form>
       </div>
       <div className="results-container">
-        {results.length === 0 && !loading && (
-          <div className="no-results" style={{ color: '#2977F5' }}>
-            No results found. Try a different search.
-          </div>
-        )}
-        {results.map((result: any, index: number) => (
+        {results.length > 0 && results.map((result: any, index: number) => (
           <div key={index} className="result-card">
             <div className="result-header">
-              <a href={result.url} className="result-title" target="_blank" rel="noopener noreferrer" style={{ color: '#2977F5' }}>
+              <a href={result.url} className="result-title" target="_blank" rel="noopener noreferrer">
                 {result.title}
               </a>
             </div>
@@ -283,21 +292,31 @@ function SearchPage({
             </div>
           </div>
         ))}
-      </div>
-      {totalPages > 1 && (
-        <div className="pagination">
-          {Array.from({ length: totalPages }, (_, i) => (
-            <button
-              key={i}
-              onClick={() => setPage(i + 1)}
-              className={`page-button ${page === i + 1 ? 'active' : ''}`}
-              style={{ color: page === i + 1 ? '#fff' : '#2977F5', background: page === i + 1 ? '#2977F5' : '#fff', borderColor: '#2977F5' }}
-            >
-              {i + 1}
-            </button>
-          ))}
+        {totalPages > 1 && (
+          <div className="pagination">
+            {Array.from({ length: totalPages }, (_, i) => (
+              <button
+                key={i}
+                onClick={() => setPage(i + 1)}
+                className={`page-button ${page === i + 1 ? 'active' : ''}`}
+                style={{ color: page === i + 1 ? '#fff' : '#2977F5', background: page === i + 1 ? '#2977F5' : '#fff', borderColor: '#2977F5' }}
+              >
+                {i + 1}
+              </button>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 40, gap: 24 }}>
+          <button onClick={goHome} className="home-button" style={{ background: '#2977F5', color: '#fff', borderRadius: 24, fontWeight: 600, fontSize: 18, padding: '12px 32px', boxShadow: '0 4px 16px rgba(41,119,245,0.13)' }}>
+            Back to Home
+          </button>
+          {results.length > 0 && !loading && (
+            <div className="results-info">
+              {totalResults} results found in {timeTaken}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -309,13 +328,18 @@ function AppWithRouter() {
   const [totalResults, setTotalResults] = useState(0);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [apiBaseUrl, setApiBaseUrl] = useState('http://localhost:8080');
   const navigate = useNavigate();
+
+  useEffect(() => {
+    getApiBaseUrl().then(setApiBaseUrl);
+  }, []);
 
   const searchAPI = async (searchQuery: string, pageNum: number = 1) => {
     if (!searchQuery.trim()) return;
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:8080/api/search', {
+      const response = await fetch(`${apiBaseUrl}/api/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: searchQuery, page: pageNum, limit: 10 })
