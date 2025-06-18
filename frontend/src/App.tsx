@@ -2,6 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Search } from 'lucide-react';
 import './App.css';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import Box from './Box';
+import SearchResultBox from './SearchResultBox';
+import { motion, AnimatePresence } from 'framer-motion';
+import InteractiveBoxGrid from './InteractiveBoxGrid';
+import BoxGrid from './BoxGrid';
+import { GridProvider } from './GridContext';
+import { useGridLayout } from './useGridLayout';
 
 const getApiBaseUrl = async () => {
   const res = await fetch('/config.json');
@@ -178,28 +185,31 @@ function HomePage({ onSearch }: { onSearch: (q: string) => void }) {
     if (e.key === 'Enter') handleSearch(e as any);
   };
   return (
-    <div className="home-container">
-      <div className="logo-section">
-        <h1 className="logo" style={{ color: '#2977F5' }}>
+    <div className="home-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', gap: 48 }}>
+      <Box style={{ marginBottom: 32, minWidth: 320, background: '#e3f0ff', textAlign: 'center' }}>
+        <h1 className="logo" style={{ color: '#2977F5', fontSize: 48, fontWeight: 800, letterSpacing: 1 }}>
           <span className="logo-ex">Soul</span><span className="logo-search">Search</span>
         </h1>
-      </div>
-      <form onSubmit={handleSearch} className="search-form">
-        <div className="search-box">
-          <input
-            type="text"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            onKeyDown={handleKeyPress}
-            placeholder="Search..."
-            className="search-input"
-            autoFocus
-          />
-          <button type="submit" className="search-button">
-            <Search size={20} color="#2977F5" />
-          </button>
-        </div>
-      </form>
+      </Box>
+      <Box style={{ minWidth: 320, background: '#b3d0f7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <form onSubmit={handleSearch} className="search-form" style={{ width: '100%' }}>
+          <div className="search-box" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <input
+              type="text"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={handleKeyPress}
+              placeholder="Search..."
+              className="search-input"
+              autoFocus
+              style={{ flex: 1, fontSize: 20, border: 'none', outline: 'none', background: 'transparent', color: '#2977F5', fontWeight: 500 }}
+            />
+            <button type="submit" className="search-button" style={{ background: '#2977F5', color: '#fff', border: 'none', borderRadius: 12, padding: '8px 18px', fontWeight: 600, fontSize: 18 }}>
+              <Search size={20} color="#fff" />
+            </button>
+          </div>
+        </form>
+      </Box>
     </div>
   );
 }
@@ -225,11 +235,15 @@ function SearchPage({
     if (input.trim()) searchAPI(input, 1);
   };
   return (
-    <div className="search-results-page">
-      <AbstractBackground />
-      <div className="search-results-header">
-        <form onSubmit={handleSearch} className="search-form search-form-results">
-          <div className="search-box">
+    <div className="search-results-page" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 48 }}>
+      <Box style={{ marginBottom: 32, minWidth: 320, background: '#e3f0ff', textAlign: 'center' }}>
+        <h1 className="logo" style={{ color: '#2977F5', fontSize: 36, fontWeight: 800, letterSpacing: 1 }}>
+          <span className="logo-ex">Soul</span><span className="logo-search">Search</span>
+        </h1>
+      </Box>
+      <Box style={{ minWidth: 320, background: '#b3d0f7', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 32 }}>
+        <form onSubmit={handleSearch} className="search-form" style={{ width: '100%' }}>
+          <div className="search-box" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <input
               type="text"
               value={input}
@@ -237,60 +251,57 @@ function SearchPage({
               placeholder="Search..."
               className="search-input"
               autoFocus
+              style={{ flex: 1, fontSize: 20, border: 'none', outline: 'none', background: 'transparent', color: '#2977F5', fontWeight: 500 }}
             />
-            <button type="submit" className="search-button">
-              <Search size={20} color="#2977F5" />
+            <button type="submit" className="search-button" style={{ background: '#2977F5', color: '#fff', border: 'none', borderRadius: 12, padding: '8px 18px', fontWeight: 600, fontSize: 18 }}>
+              <Search size={20} color="#fff" />
             </button>
           </div>
         </form>
+      </Box>
+      <div style={{ width: '100%', maxWidth: 1200, margin: '0 auto', marginBottom: 32 }}>
+        <AnimatePresence>
+          {results.length > 0 && results.map((result: any, index: number) => (
+            <motion.div key={result.url + index} layout initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.8 }} transition={{ type: 'spring', stiffness: 200, damping: 24 }}>
+              <SearchResultBox title={result.title} url={result.url} snippet={result.snippet} />
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
-      <div className="results-container">
-        {results.length > 0 && results.map((result: any, index: number) => (
-          <div key={index} className="result-card">
-            <div className="result-header">
-              <a href={result.url} className="result-title" target="_blank" rel="noopener noreferrer">
-                {result.title}
-              </a>
-            </div>
-            <div className="result-body">
-              <div className="result-snippet">{result.snippet}</div>
-              <div className="result-meta">
-                <span className="result-score">Score: {result.score}</span>
-                {result.timestamp && (
-                  <span className="result-timestamp">{new Date(result.timestamp).toLocaleString()}</span>
-                )}
-              </div>
-            </div>
-          </div>
-        ))}
-        {totalPages > 1 && (
-          <div className="pagination">
-            {Array.from({ length: totalPages }, (_, i) => (
-              <button
-                key={i}
-                onClick={() => setPage(i + 1)}
-                className={`page-button ${page === i + 1 ? 'active' : ''}`}
-                style={{ color: page === i + 1 ? '#fff' : '#2977F5', background: page === i + 1 ? '#2977F5' : '#fff', borderColor: '#2977F5' }}
-              >
-                {i + 1}
-              </button>
-            ))}
+      {totalPages > 1 && (
+        <div className="pagination" style={{ marginTop: 24 }}>
+          {Array.from({ length: totalPages }, (_, i) => (
+            <button
+              key={i}
+              onClick={() => setPage(i + 1)}
+              className={`page-button ${page === i + 1 ? 'active' : ''}`}
+              style={{ color: page === i + 1 ? '#fff' : '#2977F5', background: page === i + 1 ? '#2977F5' : '#fff', borderColor: '#2977F5', borderRadius: 12, fontWeight: 600, fontSize: 16, margin: 2, padding: '6px 18px' }}
+            >
+              {i + 1}
+            </button>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 40, gap: 24 }}>
+        <button onClick={goHome} className="home-button" style={{ background: '#2977F5', color: '#fff', borderRadius: 24, fontWeight: 600, fontSize: 18, padding: '12px 32px', boxShadow: '0 4px 16px rgba(41,119,245,0.13)' }}>
+          Back to Home
+        </button>
+        {results.length > 0 && !loading && (
+          <div className="results-info">
+            {totalResults} results found in {timeTaken}
           </div>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 40, gap: 24 }}>
-          <button onClick={goHome} className="home-button" style={{ background: '#2977F5', color: '#fff', borderRadius: 24, fontWeight: 600, fontSize: 18, padding: '12px 32px', boxShadow: '0 4px 16px rgba(41,119,245,0.13)' }}>
-            Back to Home
-          </button>
-          {results.length > 0 && !loading && (
-            <div className="results-info">
-              {totalResults} results found in {timeTaken}
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );
 }
+
+type BoxType = {
+  key: string;
+  color: string;
+  content?: React.ReactNode;
+  highlight?: boolean;
+};
 
 function AppWithRouter() {
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -298,81 +309,27 @@ function AppWithRouter() {
   const [timeTaken, setTimeTaken] = useState('');
   const [totalResults, setTotalResults] = useState(0);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [apiBaseUrl, setApiBaseUrl] = useState('http://localhost:8080');
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    getApiBaseUrl().then(setApiBaseUrl);
-  }, []);
-
-  const searchAPI = async (searchQuery: string, pageNum: number = 1) => {
-    if (!searchQuery.trim()) return;
-    setLoading(true);
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: searchQuery, page: pageNum, limit: 10 })
-      });
-      if (response.ok) {
-        const data: SearchResponse = await response.json();
-        setResults(data.results || []);
-        setTotalResults(data.total || 0);
-        setTotalPages(data.total_pages || 1);
-        setTimeTaken(data.time_taken || '');
-        setPage(pageNum);
-      } else {
-        setResults([]);
-      }
-    } catch {
-      setResults([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const goHome = () => {
-    navigate('/');
-    setResults([]);
-    setPage(1);
-    setTotalResults(0);
-    setTotalPages(1);
-    setTimeTaken('');
-  };
-
-  const handleSearchRoute = (q: string) => {
-    if (q.trim()) navigate(`/search?q=${encodeURIComponent(q)}`);
-  };
-
+  const [mode, setMode] = useState<'home' | 'search'>('home');
+  const [query, setQuery] = useState('');
+  const cols = Math.max(5, Math.floor(window.innerWidth / 160));
+  const rows = Math.max(5, Math.floor(window.innerHeight / 160));
+  const boxSize = Math.floor(window.innerWidth / cols) - 12;
+  const gap = 12;
+  useGridLayout({ mode, query, results });
   return (
-    <>
-      <AbstractBackground />
-      <Routes>
-        <Route path="/" element={<HomePage onSearch={handleSearchRoute} />} />
-        <Route path="/search" element={
-          <SearchPage
-            searchAPI={searchAPI}
-            results={results}
-            loading={loading}
-            timeTaken={timeTaken}
-            totalResults={totalResults}
-            totalPages={totalPages}
-            page={page}
-            setPage={setPage}
-            goHome={goHome}
-          />
-        } />
-      </Routes>
-    </>
+    <BoxGrid size={boxSize} gap={gap} />
   );
 }
 
 function App() {
+  const cols = Math.max(5, Math.floor(window.innerWidth / 160));
+  const rows = Math.max(5, Math.floor(window.innerHeight / 160));
   return (
-    <Router>
-      <AppWithRouter />
-    </Router>
+    <GridProvider rows={rows} cols={cols}>
+      <Router>
+        <AppWithRouter />
+      </Router>
+    </GridProvider>
   );
 }
 
