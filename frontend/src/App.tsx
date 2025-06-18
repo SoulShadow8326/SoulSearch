@@ -39,75 +39,40 @@ const AbstractBackground: React.FC = () => {
     };
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
-    const xOffset = 0;
-    const drawSky = () => {
-      const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
-      sky.addColorStop(0, '#eaf6ff');
-      sky.addColorStop(1, '#b3d0f7');
-      ctx.fillStyle = sky;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    };
-    drawSky();
-    const gradients = [
-      ctx.createLinearGradient(0, 0, 0, canvas.height),
-      ctx.createLinearGradient(0, 0, 0, canvas.height),
-      ctx.createLinearGradient(0, 0, 0, canvas.height)
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const size = Math.max(canvas.width, canvas.height) / 18;
+    const gap = size * 0.13;
+    const cols = Math.ceil(canvas.width / (size + gap)) + 2;
+    const rows = Math.ceil(canvas.height / (size + gap)) + 2;
+    const colors = [
+      '#e3f0ff', '#c7e0fa', '#b3d0f7', '#a5c6ef', '#a9cbe6', '#d6e8fa'
     ];
-    gradients[0].addColorStop(0, '#e3f0ff');
-    gradients[0].addColorStop(1, 'rgba(41,119,245,0.12)');
-    gradients[1].addColorStop(0, '#b3d0f7');
-    gradients[1].addColorStop(1, 'rgba(41,119,245,0.22)');
-    gradients[2].addColorStop(0, '#7fa7d9');
-    gradients[2].addColorStop(1, 'rgba(41,119,245,0.32)');
-    for (let layer = 0; layer < 3; layer++) {
-      ctx.beginPath();
-      ctx.moveTo(0, canvas.height);
-      const leftYs = [];
-      for (let x = 0; x <= canvas.width / 2; x += 2) {
-        const freq = 0.004 + layer * 0.002;
-        const amp = 60 + layer * 40;
-        const speed = 0.5 + layer * 0.2;
-        const y =
-          canvas.height - (180 + layer * 60) -
-          Math.sin(x * freq + speed) * amp -
-          Math.cos(x * (freq * 0.7) + speed * 0.7) * (amp * 0.4);
-        ctx.lineTo(x, y);
-        leftYs.push(y);
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const angle = ((row + col) % 2 === 0 ? 0.07 : -0.07) + ((row + col) % 3) * 0.04;
+        const x = col * (size + gap) + (row % 2) * (size + gap) * 0.5 - size * 0.2;
+        const y = row * (size + gap) - size * 0.2;
+        const colorIdx = (row + col + (row % 2)) % colors.length;
+        ctx.save();
+        ctx.translate(x + size / 2, y + size / 2);
+        ctx.rotate(angle);
+        ctx.beginPath();
+        ctx.moveTo(-size / 2 + 8, -size / 2);
+        ctx.lineTo(size / 2 - 8, -size / 2);
+        ctx.quadraticCurveTo(size / 2, -size / 2, size / 2, -size / 2 + 8);
+        ctx.lineTo(size / 2, size / 2 - 8);
+        ctx.quadraticCurveTo(size / 2, size / 2, size / 2 - 8, size / 2);
+        ctx.lineTo(-size / 2 + 8, size / 2);
+        ctx.quadraticCurveTo(-size / 2, size / 2, -size / 2, size / 2 - 8);
+        ctx.lineTo(-size / 2, -size / 2 + 8);
+        ctx.quadraticCurveTo(-size / 2, -size / 2, -size / 2 + 8, -size / 2);
+        ctx.closePath();
+        ctx.globalAlpha = 0.93;
+        ctx.fillStyle = colors[colorIdx];
+        ctx.fill();
+        ctx.restore();
       }
-      for (let i = leftYs.length - 2, x = canvas.width / 2 + 2; x <= canvas.width; x += 2, i--) {
-        const prev = leftYs[Math.max(0, i)];
-        const next = leftYs[Math.max(0, i - 1)];
-        const smoothY = (prev + next) / 2;
-        ctx.lineTo(x, smoothY);
-      }
-      ctx.lineTo(canvas.width, canvas.height);
-      ctx.closePath();
-      ctx.fillStyle = gradients[layer];
-      ctx.globalAlpha = 0.8 - layer * 0.2;
-      ctx.fill();
-      ctx.globalAlpha = 1;
     }
-    ctx.beginPath();
-    ctx.moveTo(0, canvas.height);
-    const leftYs = [];
-    for (let x = 0; x <= canvas.width / 2; x += 2) {
-      const y =
-        canvas.height - 60 -
-        Math.sin(x * 0.012 + 1.2) * 18 -
-        Math.cos(x * 0.018 + 0.8) * 10;
-      ctx.lineTo(x, y);
-      leftYs.push(y);
-    }
-    for (let i = leftYs.length - 2, x = canvas.width / 2 + 2; x <= canvas.width; x += 2, i--) {
-      const prev = leftYs[Math.max(0, i)];
-      const next = leftYs[Math.max(0, i - 1)];
-      const smoothY = (prev + next) / 2;
-      ctx.lineTo(x, smoothY);
-    }
-    ctx.lineTo(canvas.width, canvas.height);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(24,41,48,0.32)';
-    ctx.fill();
     return () => {
       window.removeEventListener('resize', resizeCanvas);
     };
