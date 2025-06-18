@@ -252,18 +252,18 @@ body {
 .search-results-header {
   width: 100%;
   max-width: 700px;
-  margin: 0 auto 32px auto;
+  margin: 0 auto 12px auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
   z-index: 10;
-  margin-top: 60px;
-  background: rgba(255,255,255,0.22);
-  border-radius: 32px;
-  box-shadow: 0 8px 32px 0 rgba(41,119,245,0.13), 0 2px 12px 0 rgba(24,41,48,0.07);
-  padding: 32px 0 24px 0;
-  backdrop-filter: blur(18px) saturate(1.5);
+  margin-top: 24px;
+  background: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  backdrop-filter: none;
 }
 
 .search-form-results {
@@ -271,7 +271,7 @@ body {
   display: flex;
   justify-content: center;
   margin-bottom: 0;
-  margin-top: 18px;
+  margin-top: 0;
 }
 
 .results-info {

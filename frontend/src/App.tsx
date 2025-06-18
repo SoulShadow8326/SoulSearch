@@ -74,8 +74,11 @@ const AbstractBackground: React.FC = () => {
         ctx.lineTo(x, y);
         leftYs.push(y);
       }
-      for (let i = leftYs.length - 1, x = canvas.width / 2 + 2; x <= canvas.width; x += 2, i--) {
-        ctx.lineTo(x, leftYs[i] !== undefined ? leftYs[i] : leftYs[leftYs.length - 1]);
+      for (let i = leftYs.length - 2, x = canvas.width / 2 + 2; x <= canvas.width; x += 2, i--) {
+        const prev = leftYs[Math.max(0, i)];
+        const next = leftYs[Math.max(0, i - 1)];
+        const smoothY = (prev + next) / 2;
+        ctx.lineTo(x, smoothY);
       }
       ctx.lineTo(canvas.width, canvas.height);
       ctx.closePath();
@@ -95,8 +98,11 @@ const AbstractBackground: React.FC = () => {
       ctx.lineTo(x, y);
       leftYs.push(y);
     }
-    for (let i = leftYs.length - 1, x = canvas.width / 2 + 2; x <= canvas.width; x += 2, i--) {
-      ctx.lineTo(x, leftYs[i] !== undefined ? leftYs[i] : leftYs[leftYs.length - 1]);
+    for (let i = leftYs.length - 2, x = canvas.width / 2 + 2; x <= canvas.width; x += 2, i--) {
+      const prev = leftYs[Math.max(0, i)];
+      const next = leftYs[Math.max(0, i - 1)];
+      const smoothY = (prev + next) / 2;
+      ctx.lineTo(x, smoothY);
     }
     ctx.lineTo(canvas.width, canvas.height);
     ctx.closePath();
