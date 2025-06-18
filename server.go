@@ -51,6 +51,8 @@ func (s *Server) Start() {
 	http.HandleFunc("/api/crawl", s.handleCrawl)
 	http.HandleFunc("/api/index", s.handleIndex)
 	http.HandleFunc("/api/analytics", s.handleAnalytics)
+	http.HandleFunc("/api/analytics/advanced", s.handleAdvancedAnalytics)
+	http.HandleFunc("/api/analytics/trends", s.handleQueryTrends)
 
 	// Serve static files from frontend/build
 	fs := http.FileServer(http.Dir("./frontend/build"))
@@ -257,4 +259,30 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 
 	analytics := s.engine.GetAnalytics()
 	json.NewEncoder(w).Encode(analytics)
+}
+
+func (s *Server) handleAdvancedAnalytics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	analytics := s.engine.GetAdvancedAnalytics()
+	json.NewEncoder(w).Encode(analytics)
+}
+
+func (s *Server) handleQueryTrends(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	trends := s.engine.GetQueryTrends()
+	json.NewEncoder(w).Encode(trends)
 }

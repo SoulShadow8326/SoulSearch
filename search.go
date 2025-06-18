@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -22,16 +23,22 @@ type SearchResult struct {
 
 type SearchEngine struct {
 	index        *InvertedIndex
+	mu           sync.RWMutex
 	stopWords    map[string]bool
 	pageRank     map[string]float64
 	linkGraph    map[string][]string
 	synonyms     map[string][]string
 	queryCache   map[string][]SearchResult
+	cacheTimeout map[string]time.Time
+	resultPool   sync.Pool
 	idfScores    map[string]float64
 	totalDocs    int
 	analytics    map[string]int
 	cacheHits    int
 	totalQueries int
+	termCounts   map[string]int
+	docLengths   map[string]int
+	avgDocLength float64
 }
 
 type WordNetResponse struct {
@@ -58,15 +65,85 @@ func NewSearchEngine() *SearchEngine {
 		linkGraph:    make(map[string][]string),
 		synonyms:     synonyms,
 		queryCache:   make(map[string][]SearchResult),
+		cacheTimeout: make(map[string]time.Time),
+		resultPool: sync.Pool{
+			New: func() interface{} {
+				return make([]SearchResult, 0, 100)
+			},
+		},
 		idfScores:    make(map[string]float64),
 		totalDocs:    0,
 		analytics:    make(map[string]int),
 		cacheHits:    0,
 		totalQueries: 0,
+		termCounts:   make(map[string]int),
+		docLengths:   make(map[string]int),
+		avgDocLength: 0,
 	}
 
 	log.Printf("Search engine initialized with %d stop words and %d synonym groups", len(stopWords), len(synonyms))
+
+	go engine.backgroundMaintenance()
+
 	return engine
+}
+
+func loadStopWordsFromFile() map[string]bool {
+	stopWords := make(map[string]bool)
+
+	file, err := os.Open("data/stopwords.txt")
+	if err != nil {
+		log.Printf("Error opening stopwords file: %v", err)
+		return stopWords
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		word := strings.TrimSpace(scanner.Text())
+		if word != "" {
+			stopWords[word] = true
+		}
+	}
+
+	log.Printf("Loaded %d stop words from file", len(stopWords))
+	return stopWords
+}
+
+func loadSynonymsFromFile() map[string][]string {
+	synonyms := make(map[string][]string)
+
+	file, err := os.Open("data/synonyms.txt")
+	if err != nil {
+		log.Printf("Error opening synonyms file: %v", err)
+		return synonyms
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && strings.Contains(line, ":") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				word := strings.TrimSpace(parts[0])
+				synList := strings.Split(parts[1], ",")
+				var cleanSyns []string
+				for _, syn := range synList {
+					syn = strings.TrimSpace(syn)
+					if syn != "" {
+						cleanSyns = append(cleanSyns, syn)
+					}
+				}
+				if len(cleanSyns) > 0 {
+					synonyms[word] = cleanSyns
+				}
+			}
+		}
+	}
+
+	log.Printf("Loaded %d synonym groups from file", len(synonyms))
+	return synonyms
 }
 
 func (se *SearchEngine) LoadIndex(index *InvertedIndex) {
@@ -123,19 +200,23 @@ func (se *SearchEngine) SearchPaginated(query string, page, limit int) ([]Search
 	cacheKey := strings.ToLower(query)
 	var allResults []SearchResult
 
+	se.mu.RLock()
 	if cached, exists := se.queryCache[cacheKey]; exists {
-		se.cacheHits++
-		log.Printf("Cache hit for query: '%s' (hit rate: %.1f%%)", query, float64(se.cacheHits)/float64(se.totalQueries)*100)
-		allResults = cached
-	} else {
-		se.analytics[query]++
-		allResults = se.SearchAdvanced(query, 10000) // Get all results for proper pagination
-
-		// Cache the results
-		if len(se.queryCache) > 1000 {
-			se.queryCache = make(map[string][]SearchResult)
+		if timeout, timeExists := se.cacheTimeout[cacheKey]; !timeExists || time.Since(timeout) < 5*time.Minute {
+			se.mu.RUnlock()
+			se.mu.Lock()
+			se.cacheHits++
+			se.mu.Unlock()
+			log.Printf("Cache hit for paginated query: '%s' (hit rate: %.1f%%)", query, float64(se.cacheHits)/float64(se.totalQueries)*100)
+			allResults = cached
+		} else {
+			se.mu.RUnlock()
+			allResults = se.SearchAdvanced(query, 10000)
 		}
-		se.queryCache[cacheKey] = allResults
+	} else {
+		se.mu.RUnlock()
+		se.analytics[query]++
+		allResults = se.SearchAdvanced(query, 10000)
 	}
 
 	total := len(allResults)
@@ -177,11 +258,19 @@ func (se *SearchEngine) SearchAdvanced(query string, maxResults int) []SearchRes
 	}
 
 	cacheKey := strings.ToLower(query)
+
+	se.mu.RLock()
 	if cached, exists := se.queryCache[cacheKey]; exists {
-		se.cacheHits++
-		log.Printf("Cache hit for query: '%s' (hit rate: %.1f%%)", query, float64(se.cacheHits)/float64(se.totalQueries)*100)
-		return se.limitResults(cached, maxResults)
+		if timeout, timeExists := se.cacheTimeout[cacheKey]; !timeExists || time.Since(timeout) < 5*time.Minute {
+			se.mu.RUnlock()
+			se.mu.Lock()
+			se.cacheHits++
+			se.mu.Unlock()
+			log.Printf("Cache hit for query: '%s' (hit rate: %.1f%%)", query, float64(se.cacheHits)/float64(se.totalQueries)*100)
+			return se.limitResults(cached, maxResults)
+		}
 	}
+	se.mu.RUnlock()
 
 	se.analytics[query]++
 
@@ -216,22 +305,20 @@ func (se *SearchEngine) SearchAdvanced(query string, maxResults int) []SearchRes
 	results := se.scoreAdvancedResults(queryTerms, candidates, query)
 	log.Printf("Scored %d documents", len(results))
 
-	sort.Slice(results, func(i, j int) bool {
-		if math.Abs(results[i].Score-results[j].Score) < 0.001 {
-			return len(results[i].Title) < len(results[j].Title)
-		}
-		return results[i].Score > results[j].Score
-	})
+	se.optimizedSort(results)
 
 	for i := range results {
 		results[i].Rank = i + 1
 	}
 
+	se.mu.Lock()
 	if len(se.queryCache) > 1000 {
 		se.queryCache = make(map[string][]SearchResult)
+		se.cacheTimeout = make(map[string]time.Time)
 	}
-
 	se.queryCache[cacheKey] = results
+	se.cacheTimeout[cacheKey] = time.Now()
+	se.mu.Unlock()
 
 	elapsed := time.Since(start)
 	log.Printf("Search completed in %v, returning %d results", elapsed, len(results))
@@ -351,6 +438,7 @@ func (se *SearchEngine) stemWord(word string) string {
 func (se *SearchEngine) findAdvancedCandidates(queryTerms []string) map[string]bool {
 	candidates := make(map[string]bool)
 	termScores := make(map[string]float64)
+	requiredTerms := make(map[string]bool)
 
 	log.Printf("Looking for terms: %v", queryTerms)
 	log.Printf("Available terms in index: %d", len(se.index.Terms))
@@ -358,7 +446,12 @@ func (se *SearchEngine) findAdvancedCandidates(queryTerms []string) map[string]b
 	foundTerms := []string{}
 	for _, term := range queryTerms {
 		termLower := strings.ToLower(term)
+		if len(termLower) < 2 {
+			continue
+		}
+
 		log.Printf("Searching for term: '%s'", termLower)
+		requiredTerms[termLower] = true
 
 		found := false
 
@@ -368,7 +461,7 @@ func (se *SearchEngine) findAdvancedCandidates(queryTerms []string) map[string]b
 			weight := se.calculateTermWeight(termLower)
 			for _, termFreq := range docList {
 				candidates[termFreq.URL] = true
-				termScores[termFreq.URL] += weight * termFreq.Score
+				termScores[termFreq.URL] += weight * termFreq.Score * 2.0
 			}
 			found = true
 		}
@@ -382,101 +475,74 @@ func (se *SearchEngine) findAdvancedCandidates(queryTerms []string) map[string]b
 					weight := se.calculateTermWeight(stemmed)
 					for _, termFreq := range docList {
 						candidates[termFreq.URL] = true
-						termScores[termFreq.URL] += weight * termFreq.Score * 0.9
+						termScores[termFreq.URL] += weight * termFreq.Score * 1.5
 					}
 					found = true
 				}
 			}
 		}
 
-		if !found {
-			log.Printf("No exact match for '%s', checking partial matches", termLower)
-			partialCount := 0
-
-			for indexTerm := range se.index.Terms {
-				if (strings.Contains(indexTerm, termLower) || strings.Contains(termLower, indexTerm)) && len(indexTerm) > 2 {
-					if docList := se.index.Terms[indexTerm]; len(docList) > 0 {
-						foundTerms = append(foundTerms, indexTerm)
-						log.Printf("Found partial match '%s' for '%s' in %d documents", indexTerm, termLower, len(docList))
-						weight := se.calculateTermWeight(indexTerm)
-						for _, termFreq := range docList {
-							candidates[termFreq.URL] = true
-							termScores[termFreq.URL] += weight * termFreq.Score * 0.6
-						}
-						partialCount++
-						if partialCount >= 5 {
-							break
-						}
-					}
-				}
-			}
-
-			if partialCount == 0 {
-				pluralTerm := termLower + "s"
-				if docList, exists := se.index.Terms[pluralTerm]; exists {
-					foundTerms = append(foundTerms, pluralTerm)
-					log.Printf("Found plural match '%s' for '%s' in %d documents", pluralTerm, termLower, len(docList))
-					weight := se.calculateTermWeight(pluralTerm)
+		if !found && len(termLower) >= 4 {
+			fuzzyMatches := se.findFuzzyMatches(termLower)
+			if len(fuzzyMatches) > 0 {
+				bestMatch := fuzzyMatches[0]
+				if docList, exists := se.index.Terms[bestMatch]; exists {
+					foundTerms = append(foundTerms, bestMatch)
+					log.Printf("Found fuzzy match '%s' for '%s' in %d documents", bestMatch, termLower, len(docList))
+					weight := se.calculateTermWeight(bestMatch)
 					for _, termFreq := range docList {
 						candidates[termFreq.URL] = true
 						termScores[termFreq.URL] += weight * termFreq.Score * 0.8
 					}
-					partialCount++
+					found = true
 				}
-
-				if strings.HasSuffix(termLower, "s") && len(termLower) > 3 {
-					singularTerm := termLower[:len(termLower)-1]
-					if docList, exists := se.index.Terms[singularTerm]; exists {
-						foundTerms = append(foundTerms, singularTerm)
-						log.Printf("Found singular match '%s' for '%s' in %d documents", singularTerm, termLower, len(docList))
-						weight := se.calculateTermWeight(singularTerm)
-						for _, termFreq := range docList {
-							candidates[termFreq.URL] = true
-							termScores[termFreq.URL] += weight * termFreq.Score * 0.8
-						}
-						partialCount++
-					}
-				}
-			}
-
-			if partialCount == 0 {
-				fuzzyMatches := se.findFuzzyMatches(termLower)
-				for _, fuzzyTerm := range fuzzyMatches {
-					if docList, exists := se.index.Terms[fuzzyTerm]; exists {
-						foundTerms = append(foundTerms, fuzzyTerm)
-						log.Printf("Found fuzzy match '%s' for '%s' in %d documents", fuzzyTerm, termLower, len(docList))
-						weight := se.calculateTermWeight(fuzzyTerm)
-						for _, termFreq := range docList {
-							candidates[termFreq.URL] = true
-							termScores[termFreq.URL] += weight * termFreq.Score * 0.4
-						}
-						partialCount++
-						if partialCount >= 2 {
-							break
-						}
-					}
-				}
-			}
-
-			if partialCount == 0 {
-				log.Printf("No matches found for term '%s'", termLower)
 			}
 		}
 	}
-	log.Printf("Found matching terms: %v", foundTerms)
 
-	if len(candidates) > 100 {
-		threshold := se.calculateThreshold(termScores) * 0.4
-		log.Printf("Applying lowered threshold %.2f to %d candidates", threshold, len(candidates))
+	if len(foundTerms) == 0 {
+		log.Printf("No terms found at all")
+		return candidates
+	}
 
-		filteredCandidates := make(map[string]bool)
+	if len(queryTerms) > 1 {
+		strictCandidates := make(map[string]bool)
+		minRequiredTerms := len(queryTerms)
+
+		if len(queryTerms) > 3 {
+			minRequiredTerms = int(math.Ceil(float64(len(queryTerms)) * 0.8))
+		} else if len(queryTerms) == 3 {
+			minRequiredTerms = 2
+		}
+
 		for url := range candidates {
-			if termScores[url] >= threshold {
-				filteredCandidates[url] = true
+			doc, exists := se.index.Docs[url]
+			if !exists {
+				continue
+			}
+
+			titleLower := strings.ToLower(doc.Title)
+			contentLower := strings.ToLower(doc.Content)
+
+			termsFoundInDoc := 0
+			for _, term := range queryTerms {
+				termLower := strings.ToLower(term)
+				if strings.Contains(titleLower, termLower) || strings.Contains(contentLower, termLower) {
+					termsFoundInDoc++
+				}
+			}
+
+			if termsFoundInDoc >= minRequiredTerms {
+				strictCandidates[url] = true
 			}
 		}
-		log.Printf("After threshold filtering: %d candidates remain", len(filteredCandidates))
-		return filteredCandidates
+
+		log.Printf("Strict filtering: %d candidates remain from %d (required %d/%d terms)",
+			len(strictCandidates), len(candidates), minRequiredTerms, len(queryTerms))
+
+		if len(strictCandidates) > 0 {
+			return strictCandidates
+		}
 	}
 
 	return candidates
@@ -514,26 +580,6 @@ func (se *SearchEngine) calculateTermWeight(term string) float64 {
 	return idf
 }
 
-func (se *SearchEngine) calculateThreshold(termScores map[string]float64) float64 {
-	if len(termScores) == 0 {
-		return 0
-	}
-
-	var scores []float64
-	for _, score := range termScores {
-		scores = append(scores, score)
-	}
-
-	sort.Float64s(scores)
-
-	if len(scores) < 10 {
-		return 0
-	}
-
-	percentile := int(float64(len(scores)) * 0.2)
-	return scores[percentile]
-}
-
 func (se *SearchEngine) scoreAdvancedResults(queryTerms []string, candidates map[string]bool, originalQuery string) []SearchResult {
 	var results []SearchResult
 	seenTitles := make(map[string]bool)
@@ -554,169 +600,106 @@ func (se *SearchEngine) scoreAdvancedResults(queryTerms []string, candidates map
 		}
 		seenTitles[titleKey] = true
 
-		titleScore := se.calculateTextScore(queryTerms, doc.Title, 6.0)
-		contentScore := se.calculateTextScore(queryTerms, doc.Content, 1.0)
-		urlScore := se.calculateURLScore(queryTerms, doc.URL)
+		relevanceScore := se.calculateIntelligentRelevance(queryTerms, originalQuery, doc)
 
-		phraseScore := se.calculatePhraseScore(originalQuery, doc.Content, doc.Title)
-		queryMatchScore := se.calculateQueryMatchScore(queryTerms, doc.Title, doc.Content)
-
-		titleMatchBonus := 0.0
-		titleLower := strings.ToLower(doc.Title)
-		for _, term := range queryTerms {
-			if strings.Contains(titleLower, strings.ToLower(term)) {
-				titleMatchBonus += 2.0
-			}
+		if relevanceScore < 0.5 {
+			continue
 		}
 
-		exactTitleMatchBonus := 0.0
-		fullQuery := strings.Join(queryTerms, " ")
-		if strings.Contains(titleLower, strings.ToLower(fullQuery)) {
-			exactTitleMatchBonus = 8.0
+		snippet := se.generateAdvancedSnippet(doc.Content, queryTerms, 200)
+
+		result := SearchResult{
+			URL:     doc.URL,
+			Title:   doc.Title,
+			Snippet: snippet,
+			Score:   relevanceScore,
 		}
 
-		contentQuality := se.calculateContentQuality(doc.Content, queryTerms)
-
-		totalScore := (titleScore*0.45 + contentScore*0.3 + urlScore*0.08 +
-			phraseScore*0.12 + queryMatchScore*0.03 + titleMatchBonus*0.015 +
-			exactTitleMatchBonus*0.005 + contentQuality*0.02)
-
-		if totalScore > 0.1 {
-			snippet := se.generateAdvancedSnippet(doc.Content, queryTerms, 200)
-
-			result := SearchResult{
-				URL:     doc.URL,
-				Title:   doc.Title,
-				Snippet: snippet,
-				Score:   totalScore,
-			}
-
-			results = append(results, result)
-		}
+		results = append(results, result)
 	}
 
 	return results
 }
 
-func (se *SearchEngine) calculateTextScore(queryTerms []string, text string, weight float64) float64 {
-	if text == "" {
-		return 0
+func (se *SearchEngine) calculateIntelligentRelevance(queryTerms []string, originalQuery string, doc Document) float64 {
+	titleLower := strings.ToLower(doc.Title)
+	contentLower := strings.ToLower(doc.Content)
+	queryLower := strings.ToLower(originalQuery)
+
+	exactQueryInTitle := 0.0
+	if strings.Contains(titleLower, queryLower) {
+		exactQueryInTitle = 50.0
 	}
 
-	textLower := strings.ToLower(text)
-	words := se.tokenize(textLower)
-	wordCount := make(map[string]int)
-
-	for _, word := range words {
-		wordCount[word]++
+	exactQueryInContent := 0.0
+	if strings.Contains(contentLower, queryLower) {
+		exactQueryInContent = 25.0
 	}
 
-	score := 0.0
-	totalWords := float64(len(words))
-	totalQueryTermsFound := 0
-	if totalWords == 0 {
-		totalWords = 1
-	}
-
-	k1 := 1.2
-	b := 0.75
-	avgDocLength := 150.0
-
-	exactPhraseBonus := 0.0
-	fullQuery := strings.Join(queryTerms, " ")
-	if strings.Contains(textLower, fullQuery) {
-		exactPhraseBonus = 5.0 * weight
-	}
-
+	termMatchScore := 0.0
+	termCount := 0
 	for _, term := range queryTerms {
 		termLower := strings.ToLower(term)
-		if count, exists := wordCount[termLower]; exists {
-			totalQueryTermsFound++
-			tf := float64(count)
+		if len(termLower) < 2 {
+			continue
+		}
 
-			idf := se.calculateTermWeight(termLower)
-			if idf == 0 {
-				idf = 1.0
-			}
+		titleMatches := float64(strings.Count(titleLower, termLower))
+		contentMatches := float64(strings.Count(contentLower, termLower))
 
-			bm25 := idf * (tf * (k1 + 1)) / (tf + k1*(1-b+b*(totalWords/avgDocLength)))
-
-			positionBoost := se.calculatePositionBoost(termLower, textLower)
-
-			termLength := len(termLower)
-			lengthBonus := 1.0
-			if termLength > 6 {
-				lengthBonus = 1.5
-			} else if termLength > 4 {
-				lengthBonus = 1.2
-			}
-
-			termScore := bm25 * positionBoost * lengthBonus
-			score += termScore
+		if titleMatches > 0 {
+			termMatchScore += titleMatches * 15.0
+			termCount++
+		}
+		if contentMatches > 0 {
+			termMatchScore += contentMatches * 3.0
+			termCount++
 		}
 	}
 
-	queryTermCoverage := float64(totalQueryTermsFound) / float64(len(queryTerms))
-	if queryTermCoverage < 0.5 && len(queryTerms) > 1 {
-		score *= 0.3
+	termCoverageBonus := 0.0
+	if termCount == len(queryTerms) && len(queryTerms) > 1 {
+		termCoverageBonus = 20.0
+	} else if termCount >= len(queryTerms)/2 {
+		termCoverageBonus = 10.0
 	}
 
-	docLengthNormalization := 1.0
-	if totalWords > 1000 {
-		docLengthNormalization = 0.8
-	} else if totalWords > 500 {
-		docLengthNormalization = 0.9
-	} else if totalWords < 50 {
-		docLengthNormalization = 0.7
-	}
+	semanticScore := se.calculateSemanticRelevance(queryTerms, doc)
 
-	return (score + exactPhraseBonus) * weight * docLengthNormalization
+	titleQualityScore := se.calculateTitleQuality(doc.Title, queryTerms)
+
+	contentDensityScore := se.calculateContentDensity(queryTerms, doc.Content)
+
+	positionScore := se.calculateTermPositions(queryTerms, doc.Content)
+
+	domainAuthorityScore := se.calculateDomainAuthority(doc.URL)
+
+	totalScore := exactQueryInTitle + exactQueryInContent + termMatchScore +
+		termCoverageBonus + semanticScore + titleQualityScore +
+		contentDensityScore + positionScore + domainAuthorityScore
+
+	penaltyScore := se.calculateRelevancePenalties(queryTerms, doc)
+
+	finalScore := math.Max(0, totalScore-penaltyScore)
+
+	return finalScore / 10.0
 }
 
-func (se *SearchEngine) calculatePositionBoost(term, text string) float64 {
-	index := strings.Index(text, term)
-	if index == -1 {
-		return 1.0
-	}
-
-	textLen := float64(len(text))
-	if textLen == 0 {
-		return 1.0
-	}
-
-	position := float64(index) / textLen
-
-	if position < 0.02 {
-		return 5.0
-	} else if position < 0.05 {
-		return 4.0
-	} else if position < 0.1 {
-		return 3.0
-	} else if position < 0.2 {
-		return 2.5
-	} else if position < 0.3 {
-		return 2.0
-	} else if position < 0.5 {
-		return 1.5
-	}
-
-	return 1.0
-}
-
-func (se *SearchEngine) calculateURLScore(queryTerms []string, url string) float64 {
-	urlLower := strings.ToLower(url)
+func (se *SearchEngine) calculateSemanticRelevance(queryTerms []string, doc Document) float64 {
 	score := 0.0
+	titleWords := se.tokenize(strings.ToLower(doc.Title))
+	contentWords := se.tokenize(strings.ToLower(doc.Content))
 
-	for _, term := range queryTerms {
-		if strings.Contains(urlLower, term) {
-			pathParts := strings.Split(urlLower, "/")
-			for _, part := range pathParts {
-				if strings.Contains(part, term) {
-					if part == term {
-						score += 4.0
-					} else if strings.HasPrefix(part, term) || strings.HasSuffix(part, term) {
-						score += 3.0
-					} else {
+	for _, queryTerm := range queryTerms {
+		if synonyms, exists := se.synonyms[strings.ToLower(queryTerm)]; exists {
+			for _, synonym := range synonyms {
+				for _, titleWord := range titleWords {
+					if strings.Contains(titleWord, synonym) || strings.Contains(synonym, titleWord) {
+						score += 8.0
+					}
+				}
+				for _, contentWord := range contentWords {
+					if strings.Contains(contentWord, synonym) || strings.Contains(synonym, contentWord) {
 						score += 2.0
 					}
 				}
@@ -724,50 +707,157 @@ func (se *SearchEngine) calculateURLScore(queryTerms []string, url string) float
 		}
 	}
 
-	if strings.Contains(urlLower, "https") {
-		score += 0.2
+	return score
+}
+
+func (se *SearchEngine) calculateTitleQuality(title string, queryTerms []string) float64 {
+	if len(title) < 5 {
+		return -10.0
 	}
 
-	depth := strings.Count(urlLower, "/") - 2
-	if depth < 2 {
-		score += 1.0
-	} else if depth < 4 {
-		score += 0.5
+	titleLower := strings.ToLower(title)
+
+	if strings.Contains(titleLower, "hacker news") && !se.queryContainsHackerNews(queryTerms) {
+		return -50.0
+	}
+
+	if strings.Contains(titleLower, "news.ycombinator") && !se.queryContainsHackerNews(queryTerms) {
+		return -50.0
+	}
+
+	genericTerms := []string{"home", "page", "index", "main", "default", "welcome", "news", "blog"}
+	for _, generic := range genericTerms {
+		if strings.EqualFold(title, generic) {
+			return -20.0
+		}
+	}
+
+	score := 0.0
+	if len(title) >= 10 && len(title) <= 100 {
+		score += 5.0
 	}
 
 	return score
 }
 
-func (se *SearchEngine) calculatePhraseScore(originalQuery, content, title string) float64 {
-	phrases := se.extractPhrases(originalQuery)
-	score := 0.0
-	contentLower := strings.ToLower(content)
-	titleLower := strings.ToLower(title)
+func (se *SearchEngine) queryContainsHackerNews(queryTerms []string) bool {
+	queryText := strings.ToLower(strings.Join(queryTerms, " "))
+	return strings.Contains(queryText, "hacker") || strings.Contains(queryText, "news") || strings.Contains(queryText, "ycombinator")
+}
 
-	for _, phrase := range phrases {
-		if strings.Contains(titleLower, phrase) {
-			score += 12.0
-		}
-		if strings.Contains(contentLower, phrase) {
-			score += 6.0
-		}
+func (se *SearchEngine) calculateContentDensity(queryTerms []string, content string) float64 {
+	if len(content) < 50 {
+		return -5.0
 	}
 
-	queryLower := strings.ToLower(originalQuery)
-	if !strings.Contains(queryLower, "\"") {
-		words := strings.Fields(queryLower)
-		if len(words) > 1 {
-			fullQuery := strings.Join(words, " ")
-			if strings.Contains(titleLower, fullQuery) {
-				score += 8.0
-			}
-			if strings.Contains(contentLower, fullQuery) {
-				score += 4.0
+	contentLower := strings.ToLower(content)
+	words := se.tokenize(contentLower)
+
+	if len(words) < 20 {
+		return -10.0
+	}
+
+	termDensity := 0.0
+	for _, term := range queryTerms {
+		termLower := strings.ToLower(term)
+		occurrences := float64(strings.Count(contentLower, termLower))
+		density := occurrences / float64(len(words))
+		termDensity += density * 100.0
+	}
+
+	if termDensity > 5.0 {
+		return 15.0
+	} else if termDensity > 2.0 {
+		return 10.0
+	} else if termDensity > 0.5 {
+		return 5.0
+	}
+
+	return 0.0
+}
+
+func (se *SearchEngine) calculateTermPositions(queryTerms []string, content string) float64 {
+	contentLower := strings.ToLower(content)
+	words := se.tokenize(contentLower)
+
+	if len(words) < 10 {
+		return 0.0
+	}
+
+	score := 0.0
+
+	for _, term := range queryTerms {
+		termLower := strings.ToLower(term)
+
+		for i, word := range words {
+			if strings.Contains(word, termLower) {
+				position := float64(i) / float64(len(words))
+				if position < 0.1 {
+					score += 8.0
+				} else if position < 0.3 {
+					score += 5.0
+				} else if position < 0.5 {
+					score += 2.0
+				}
 			}
 		}
 	}
 
 	return score
+}
+
+func (se *SearchEngine) calculateDomainAuthority(url string) float64 {
+	urlLower := strings.ToLower(url)
+
+	authorityDomains := []string{"wikipedia.org", "github.com", "stackoverflow.com", "reddit.com", "medium.com"}
+	for _, domain := range authorityDomains {
+		if strings.Contains(urlLower, domain) {
+			return 10.0
+		}
+	}
+
+	if strings.Contains(urlLower, ".edu") || strings.Contains(urlLower, ".gov") {
+		return 8.0
+	}
+
+	return 0.0
+}
+
+func (se *SearchEngine) calculateRelevancePenalties(queryTerms []string, doc Document) float64 {
+	penalty := 0.0
+
+	titleLower := strings.ToLower(doc.Title)
+	contentLower := strings.ToLower(doc.Content)
+
+	irrelevantPatterns := []string{
+		"404", "not found", "error", "coming soon", "under construction",
+		"lorem ipsum", "test page", "placeholder", "example",
+	}
+
+	for _, pattern := range irrelevantPatterns {
+		if strings.Contains(titleLower, pattern) || strings.Contains(contentLower, pattern) {
+			penalty += 30.0
+		}
+	}
+
+	if len(doc.Content) > 10000 {
+		queryTermsFound := 0
+		for _, term := range queryTerms {
+			if strings.Contains(contentLower, strings.ToLower(term)) {
+				queryTermsFound++
+			}
+		}
+
+		if queryTermsFound < len(queryTerms)/2 {
+			penalty += 20.0
+		}
+	}
+
+	if strings.Count(titleLower, " ") > 20 {
+		penalty += 10.0
+	}
+
+	return penalty
 }
 
 func (se *SearchEngine) generateAdvancedSnippet(content string, queryTerms []string, maxLength int) string {
@@ -841,76 +931,6 @@ func (se *SearchEngine) generateAdvancedSnippet(content string, queryTerms []str
 	return snippet
 }
 
-func (se *SearchEngine) splitIntoSentences(text string) []string {
-	re := regexp.MustCompile(`[.!?]+\s+`)
-	sentences := re.Split(text, -1)
-
-	var result []string
-	for _, sentence := range sentences {
-		trimmed := strings.TrimSpace(sentence)
-		if len(trimmed) > 15 && len(trimmed) < 300 {
-			result = append(result, trimmed)
-		}
-	}
-
-	return result
-}
-
-func (se *SearchEngine) findBestSentences(sentences []string, queryTerms []string, maxSentences int) []string {
-	type sentenceScore struct {
-		sentence string
-		score    float64
-		index    int
-	}
-
-	var scored []sentenceScore
-
-	for i, sentence := range sentences {
-		score := 0.0
-		sentenceLower := strings.ToLower(sentence)
-
-		for _, term := range queryTerms {
-			if strings.Contains(sentenceLower, term) {
-				score += 2.0
-
-				termCount := strings.Count(sentenceLower, term)
-				score += float64(termCount-1) * 1.0
-			}
-		}
-
-		if score > 0 {
-			scored = append(scored, sentenceScore{
-				sentence: sentence,
-				score:    score,
-				index:    i,
-			})
-		}
-	}
-
-	sort.Slice(scored, func(i, j int) bool {
-		if scored[i].score == scored[j].score {
-			return scored[i].index < scored[j].index
-		}
-		return scored[i].score > scored[j].score
-	})
-
-	var result []string
-	count := 0
-	for _, s := range scored {
-		if count >= maxSentences {
-			break
-		}
-		result = append(result, s.sentence)
-		count++
-	}
-
-	if len(result) == 0 && len(sentences) > 0 {
-		result = append(result, sentences[0])
-	}
-
-	return result
-}
-
 func (se *SearchEngine) highlightTerms(text string, queryTerms []string) string {
 	result := text
 
@@ -927,150 +947,161 @@ func (se *SearchEngine) highlightTerms(text string, queryTerms []string) string 
 }
 
 func (se *SearchEngine) GetAnalytics() map[string]interface{} {
-	hitRate := 0.0
+	se.mu.RLock()
+	defer se.mu.RUnlock()
+
+	cacheHitRate := 0.0
 	if se.totalQueries > 0 {
-		hitRate = float64(se.cacheHits) / float64(se.totalQueries) * 100
+		cacheHitRate = float64(se.cacheHits) / float64(se.totalQueries) * 100
 	}
 
 	return map[string]interface{}{
-		"total_queries": se.totalQueries,
-		"cache_hits":    se.cacheHits,
-		"hit_rate":      hitRate,
-		"cache_size":    len(se.queryCache),
-		"top_queries":   se.GetTopQueries(10),
+		"total_queries":  se.totalQueries,
+		"cache_hits":     se.cacheHits,
+		"cache_hit_rate": cacheHitRate,
+		"unique_queries": len(se.analytics),
 	}
 }
 
-func (se *SearchEngine) GetTopQueries(limit int) []map[string]interface{} {
-	type queryCount struct {
-		query string
-		count int
+func (se *SearchEngine) GetAdvancedAnalytics() map[string]interface{} {
+	se.mu.RLock()
+	defer se.mu.RUnlock()
+
+	cacheHitRate := 0.0
+	if se.totalQueries > 0 {
+		cacheHitRate = float64(se.cacheHits) / float64(se.totalQueries) * 100
 	}
 
-	var queries []queryCount
+	avgQueryLength := 0.0
+	if len(se.analytics) > 0 {
+		totalLength := 0
+		for query := range se.analytics {
+			totalLength += len(strings.Fields(query))
+		}
+		avgQueryLength = float64(totalLength) / float64(len(se.analytics))
+	}
+
+	return map[string]interface{}{
+		"total_queries":    se.totalQueries,
+		"cache_hits":       se.cacheHits,
+		"cache_hit_rate":   cacheHitRate,
+		"unique_queries":   len(se.analytics),
+		"avg_query_length": avgQueryLength,
+		"cache_size":       len(se.queryCache),
+		"total_documents":  se.totalDocs,
+		"avg_doc_length":   se.avgDocLength,
+		"index_size":       len(se.index.Terms),
+	}
+}
+
+func (se *SearchEngine) GetQueryTrends() map[string]interface{} {
+	se.mu.RLock()
+	defer se.mu.RUnlock()
+
+	type queryFreq struct {
+		Query string
+		Count int
+	}
+
+	var queries []queryFreq
 	for query, count := range se.analytics {
-		queries = append(queries, queryCount{query, count})
+		queries = append(queries, queryFreq{Query: query, Count: count})
 	}
 
 	sort.Slice(queries, func(i, j int) bool {
-		return queries[i].count > queries[j].count
+		return queries[i].Count > queries[j].Count
 	})
 
-	var result []map[string]interface{}
+	topQueries := make([]map[string]interface{}, 0, 10)
 	for i, q := range queries {
-		if i >= limit {
+		if i >= 10 {
 			break
 		}
-		result = append(result, map[string]interface{}{
-			"query": q.query,
-			"count": q.count,
+		topQueries = append(topQueries, map[string]interface{}{
+			"query": q.Query,
+			"count": q.Count,
 		})
 	}
 
-	return result
+	return map[string]interface{}{
+		"top_queries":          topQueries,
+		"total_unique_queries": len(queries),
+	}
 }
 
-func (se *SearchEngine) removeDuplicates(slice []string) []string {
-	keys := make(map[string]bool)
-	var result []string
+func (se *SearchEngine) UpdateDocumentStats() {
+	if se.index == nil {
+		return
+	}
 
-	for _, item := range slice {
-		if !keys[item] && len(item) > 1 {
-			keys[item] = true
-			result = append(result, item)
+	se.mu.Lock()
+	defer se.mu.Unlock()
+
+	totalLength := 0
+	docCount := 0
+
+	for _, termList := range se.index.Terms {
+		for _, termFreq := range termList {
+			if length, exists := se.docLengths[termFreq.URL]; exists {
+				totalLength += length
+			} else {
+				docLength := int(termFreq.Score * 100)
+				se.docLengths[termFreq.URL] = docLength
+				totalLength += docLength
+			}
+			docCount++
 		}
 	}
 
-	return result
-}
-
-func (se *SearchEngine) limitResults(results []SearchResult, maxResults int) []SearchResult {
-	if len(results) <= maxResults {
-		return results
+	if docCount > 0 {
+		se.avgDocLength = float64(totalLength) / float64(docCount)
 	}
-	return results[:maxResults]
+	se.totalDocs = docCount
 }
 
-func (se *SearchEngine) calculateQueryMatchScore(queryTerms []string, title, content string) float64 {
-	titleLower := strings.ToLower(title)
-	contentLower := strings.ToLower(content)
+func (se *SearchEngine) ClearOldCache() {
+	se.mu.Lock()
+	defer se.mu.Unlock()
 
-	matchCount := 0
-	totalTerms := len(queryTerms)
-
-	for _, term := range queryTerms {
-		if strings.Contains(titleLower, term) || strings.Contains(contentLower, term) {
-			matchCount++
+	now := time.Now()
+	for key, timestamp := range se.cacheTimeout {
+		if now.Sub(timestamp) > 10*time.Minute {
+			delete(se.queryCache, key)
+			delete(se.cacheTimeout, key)
 		}
 	}
-
-	if totalTerms == 0 {
-		return 0
-	}
-
-	return float64(matchCount) / float64(totalTerms)
 }
 
-func loadStopWordsFromFile() map[string]bool {
-	stopWords := make(map[string]bool)
+func (se *SearchEngine) backgroundMaintenance() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
 
-	file, err := os.Open("data/stopwords.txt")
-	if err != nil {
-		log.Printf("Could not load stopwords.txt, using defaults: %v", err)
-		return map[string]bool{
-			"the": true, "a": true, "an": true, "and": true, "or": true, "but": true,
-			"in": true, "on": true, "at": true, "to": true, "for": true, "of": true,
-			"with": true, "by": true,
-		}
+	for range ticker.C {
+		se.ClearOldCache()
+		se.UpdateDocumentStats()
+		log.Printf("Background maintenance completed - cache size: %d", len(se.queryCache))
 	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		word := strings.TrimSpace(strings.ToLower(scanner.Text()))
-		if word != "" {
-			stopWords[word] = true
-		}
-	}
-
-	log.Printf("Loaded %d stop words from file", len(stopWords))
-	return stopWords
 }
 
-func loadSynonymsFromFile() map[string][]string {
-	synonyms := make(map[string][]string)
-
-	file, err := os.Open("data/synonyms.txt")
-	if err != nil {
-		log.Printf("Failed to open synonyms file: %v", err)
-		return synonyms
+func (se *SearchEngine) spellCorrect(term string) string {
+	if len(term) < 4 {
+		return term
 	}
-	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" && strings.Contains(line, ":") {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				word := strings.TrimSpace(parts[0])
-				synList := strings.Split(parts[1], ",")
-				var cleanSyns []string
-				for _, syn := range synList {
-					syn = strings.TrimSpace(syn)
-					if syn != "" {
-						cleanSyns = append(cleanSyns, syn)
-					}
-				}
-				if len(cleanSyns) > 0 {
-					synonyms[word] = cleanSyns
-				}
+	bestMatch := term
+	minDistance := 2
+
+	for indexTerm := range se.index.Terms {
+		if len(indexTerm) >= len(term)-1 && len(indexTerm) <= len(term)+1 {
+			distance := se.editDistance(term, indexTerm)
+			if distance < minDistance && distance > 0 {
+				minDistance = distance
+				bestMatch = indexTerm
 			}
 		}
 	}
 
-	log.Printf("Loaded %d synonym groups from file", len(synonyms))
-	return synonyms
+	return bestMatch
 }
 
 func (se *SearchEngine) findFuzzyMatches(term string) []string {
@@ -1128,44 +1159,6 @@ func min(a, b int) int {
 	return b
 }
 
-func (se *SearchEngine) calculateContentQuality(content string, queryTerms []string) float64 {
-	words := se.tokenize(content)
-	if len(words) < 10 {
-		return 0.1
-	}
-
-	wordCount := make(map[string]int)
-	for _, word := range words {
-		wordCount[word]++
-	}
-
-	uniqueWords := len(wordCount)
-	totalWords := len(words)
-	diversity := float64(uniqueWords) / float64(totalWords)
-
-	queryRelevance := 0.0
-	for _, term := range queryTerms {
-		if count, exists := wordCount[term]; exists {
-			queryRelevance += float64(count)
-		}
-	}
-
-	queryDensity := queryRelevance / float64(totalWords)
-
-	if queryDensity > 0.1 {
-		queryDensity = 0.1
-	}
-
-	lengthScore := 1.0
-	if totalWords < 50 {
-		lengthScore = 0.5
-	} else if totalWords > 1000 {
-		lengthScore = 0.8
-	}
-
-	return diversity*0.3 + queryDensity*5.0 + lengthScore*0.2
-}
-
 func (se *SearchEngine) handleSearchOperators(query string) string {
 	query = strings.ReplaceAll(query, " and ", " ")
 	query = strings.ReplaceAll(query, " or ", " ")
@@ -1175,23 +1168,94 @@ func (se *SearchEngine) handleSearchOperators(query string) string {
 	return query
 }
 
-func (se *SearchEngine) spellCorrect(term string) string {
-	if len(term) < 4 {
-		return term
+func (se *SearchEngine) GetTopQueries(limit int) []map[string]interface{} {
+	type queryCount struct {
+		query string
+		count int
 	}
 
-	bestMatch := term
-	minDistance := 2
+	var queries []queryCount
+	for query, count := range se.analytics {
+		queries = append(queries, queryCount{query, count})
+	}
 
-	for indexTerm := range se.index.Terms {
-		if len(indexTerm) >= len(term)-1 && len(indexTerm) <= len(term)+1 {
-			distance := se.editDistance(term, indexTerm)
-			if distance < minDistance && distance > 0 {
-				minDistance = distance
-				bestMatch = indexTerm
-			}
+	sort.Slice(queries, func(i, j int) bool {
+		return queries[i].count > queries[j].count
+	})
+
+	var result []map[string]interface{}
+	for i, q := range queries {
+		if i >= limit {
+			break
+		}
+		result = append(result, map[string]interface{}{
+			"query": q.query,
+			"count": q.count,
+		})
+	}
+
+	return result
+}
+
+func (se *SearchEngine) removeDuplicates(slice []string) []string {
+	keys := make(map[string]bool)
+	var result []string
+
+	for _, item := range slice {
+		if !keys[item] && len(item) > 1 {
+			keys[item] = true
+			result = append(result, item)
 		}
 	}
 
-	return bestMatch
+	return result
+}
+
+func (se *SearchEngine) limitResults(results []SearchResult, maxResults int) []SearchResult {
+	if len(results) <= maxResults {
+		return results
+	}
+	return results[:maxResults]
+}
+
+func (se *SearchEngine) optimizedSort(results []SearchResult) {
+	if len(results) <= 1 {
+		return
+	}
+
+	if len(results) < 50 {
+		sort.Slice(results, func(i, j int) bool {
+			if math.Abs(results[i].Score-results[j].Score) < 0.001 {
+				return len(results[i].Title) < len(results[j].Title)
+			}
+			return results[i].Score > results[j].Score
+		})
+		return
+	}
+
+	se.quickSortResults(results, 0, len(results)-1)
+}
+
+func (se *SearchEngine) quickSortResults(results []SearchResult, low, high int) {
+	if low < high {
+		pi := se.partitionResults(results, low, high)
+		se.quickSortResults(results, low, pi-1)
+		se.quickSortResults(results, pi+1, high)
+	}
+}
+
+func (se *SearchEngine) partitionResults(results []SearchResult, low, high int) int {
+	pivot := results[high]
+	i := low - 1
+
+	for j := low; j < high; j++ {
+		if results[j].Score > pivot.Score ||
+			(math.Abs(results[j].Score-pivot.Score) < 0.001 && len(results[j].Title) < len(pivot.Title)) {
+			i++
+			results[i], results[j] = results[j], results[i]
+		}
+	}
+
+	results[i+1], results[high] = results[high], results[i+1]
+	return i + 1
 }
