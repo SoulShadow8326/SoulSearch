@@ -108,6 +108,19 @@ body {
   text-shadow: none;
   transform: none;
   animation: none;
+  -webkit-text-stroke: 0px;
+}
+
+.logo .logo-ex {
+  color: transparent;
+  -webkit-text-stroke: 2.5px #2977F5;
+  font-weight: 700;
+}
+
+.logo .logo-search {
+  color: #2977F5;
+  -webkit-text-stroke: 0px;
+  font-weight: 700;
 }
 
 .tagline {

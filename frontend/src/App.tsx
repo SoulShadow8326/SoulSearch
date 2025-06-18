@@ -203,7 +203,9 @@ function HomePage({ onSearch }: { onSearch: (q: string) => void }) {
   return (
     <div className="home-container">
       <div className="logo-section">
-        <h1 className="logo" style={{ color: '#2977F5' }}>ExSearch</h1>
+        <h1 className="logo" style={{ color: '#2977F5' }}>
+          <span className="logo-ex">Soul</span><span className="logo-search">Search</span>
+        </h1>
       </div>
       <form onSubmit={handleSearch} className="search-form">
         <div className="search-box">
