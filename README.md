@@ -1,4 +1,4 @@
-# SoulSearch
+# ExSearch
 
 A high-performance search engine built from scratch in pure Go. Features web crawling, custom indexing, PageRank algorithm, and a modern web interface.
 
@@ -28,22 +28,22 @@ A high-performance search engine built from scratch in pure Go. Features web cra
 
 ### 1. Build the application
 ```bash
-go build -o soulsearch
+go build -o exsearch
 ```
 
 ### 2. Crawl websites
 ```bash
-./soulsearch -mode=crawl -url="https://example.com" -max=1000
+./exsearch -mode=crawl -url="https://example.com" -max=1000
 ```
 
 ### 3. Build the search index
 ```bash
-./soulsearch -mode=index
+./exsearch -mode=index
 ```
 
 ### 4. Start the search server
 ```bash
-./soulsearch -mode=server -port=8080
+./exsearch -mode=server -port=8080
 ```
 
 ### 5. Search via web interface
@@ -102,7 +102,7 @@ The search engine uses custom file-based storage:
 
 ## Scoring Algorithm
 
-SoulSearch uses a sophisticated multi-factor scoring system:
+ExSearch uses a sophisticated multi-factor scoring system:
 
 1. **Term Frequency (TF)**: How often query terms appear
 2. **PageRank**: Link-based authority score
@@ -123,13 +123,13 @@ SoulSearch uses a sophisticated multi-factor scoring system:
 
 ```bash
 # 1. Crawl a website
-./soulsearch -mode=crawl -url="https://news.ycombinator.com" -max=500
+./exsearch -mode=crawl -url="https://news.ycombinator.com" -max=500
 
 # 2. Build the search index
-./soulsearch -mode=index
+./exsearch -mode=index
 
 # 3. Start the search server
-./soulsearch -mode=server -port=8080
+./exsearch -mode=server -port=8080
 
 # 4. Search via curl
 curl "http://localhost:8080/api/search?q=golang+programming"

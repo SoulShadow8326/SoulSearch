@@ -676,6 +676,11 @@ body {
   }
 }
 
+.abstract-canvas {
+  filter: blur(0.5px) brightness(1.08) saturate(1.1);
+  transition: filter 0.5s;
+}
+
 .pagination {
   display: flex;
   justify-content: center;

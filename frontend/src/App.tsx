@@ -25,7 +25,6 @@ const AbstractBackground: React.FC = () => {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -33,46 +32,78 @@ const AbstractBackground: React.FC = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
     };
-
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
     let time = 0;
+    const colors = [
+      'rgba(41,119,245,0.18)',
+      'rgba(41,119,245,0.28)',
+      'rgba(41,119,245,0.38)',
+      'rgba(24,41,48,0.18)',
+      'rgba(24,41,48,0.28)'
+    ];
+    const gradients = [
+      ctx.createLinearGradient(0, 0, 0, canvas.height),
+      ctx.createLinearGradient(0, 0, 0, canvas.height),
+      ctx.createLinearGradient(0, 0, 0, canvas.height)
+    ];
+    gradients[0].addColorStop(0, '#e3f0ff');
+    gradients[0].addColorStop(1, 'rgba(41,119,245,0.12)');
+    gradients[1].addColorStop(0, '#b3d0f7');
+    gradients[1].addColorStop(1, 'rgba(41,119,245,0.22)');
+    gradients[2].addColorStop(0, '#7fa7d9');
+    gradients[2].addColorStop(1, 'rgba(41,119,245,0.32)');
+
+    const drawSky = () => {
+      const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      sky.addColorStop(0, '#eaf6ff');
+      sky.addColorStop(1, '#b3d0f7');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    };
 
     const animate = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      time += 0.005;
-      
-      ctx.fillStyle = '#2977F5';
-
-      // Draw top mountains with slow movement
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      for (let x = 0; x <= canvas.width; x += 20) {
-        const height = 80 + Math.sin(x * 0.01 + time) * 30 + Math.cos(x * 0.015 + time * 0.7) * 20;
-        ctx.lineTo(x, height);
+      drawSky();
+      time += 0.008;
+      // Layered mountains
+      for (let layer = 0; layer < 3; layer++) {
+        ctx.beginPath();
+        ctx.moveTo(0, canvas.height);
+        for (let x = 0; x <= canvas.width; x += 2) {
+          const freq = 0.004 + layer * 0.002;
+          const amp = 60 + layer * 40;
+          const speed = time * (0.5 + layer * 0.2);
+          const y =
+            canvas.height - (180 + layer * 60) -
+            Math.sin(x * freq + speed) * amp -
+            Math.cos(x * (freq * 0.7) + speed * 0.7) * (amp * 0.4);
+          ctx.lineTo(x, y);
+        }
+        ctx.lineTo(canvas.width, canvas.height);
+        ctx.closePath();
+        ctx.fillStyle = gradients[layer];
+        ctx.globalAlpha = 0.8 - layer * 0.2;
+        ctx.fill();
+        ctx.globalAlpha = 1;
       }
-      ctx.lineTo(canvas.width, 0);
-      ctx.closePath();
-      ctx.fill();
-
-      // Draw bottom mountains with slow movement
+      // Foreground silhouette
       ctx.beginPath();
       ctx.moveTo(0, canvas.height);
-      for (let x = 0; x <= canvas.width; x += 20) {
-        const height = 120 + Math.sin(x * 0.008 + time * 0.8) * 40 + Math.cos(x * 0.012 + time * 0.6) * 25;
-        ctx.lineTo(x, canvas.height - height);
+      for (let x = 0; x <= canvas.width; x += 2) {
+        const y =
+          canvas.height - 60 -
+          Math.sin(x * 0.012 + time * 1.2) * 18 -
+          Math.cos(x * 0.018 + time * 0.8) * 10;
+        ctx.lineTo(x, y);
       }
       ctx.lineTo(canvas.width, canvas.height);
       ctx.closePath();
+      ctx.fillStyle = 'rgba(24,41,48,0.32)';
       ctx.fill();
-
       animationIdRef.current = requestAnimationFrame(animate);
     };
-
     animate();
-
     return () => {
       window.removeEventListener('resize', resizeCanvas);
       if (animationIdRef.current) {
@@ -243,169 +274,88 @@ function App() {
     setPage(1);
   };
 
-  const goToPage = (pageNum: number) => {
-    if (pageNum >= 1 && pageNum <= totalPages) {
-      searchAPI(query, pageNum);
-    }
-  };
-
-  const nextPage = () => {
-    if (page < totalPages) {
-      goToPage(page + 1);
-    }
-  };
-
-  const prevPage = () => {
-    if (page > 1) {
-      goToPage(page - 1);
-    }
-  };
-
-  const formatURL = (url: string) => {
-    try {
-      return new URL(url).hostname;
-    } catch {
-      return url;
-    }
-  };
-
-  if (searchView) {
-    console.log('Rendering search view with results:', results, 'length:', results?.length);
-    return (
-      <div className="search-results-page">
-        <SearchBackground />
-        <div className="search-header">
-          <div className="search-header-content">
-            <div className="logo-small" onClick={goHome}>SoulSearch</div>
-            <div className="search-center-container">
-              <form onSubmit={handleSearch} className="search-form-header">
-                <div className="search-box-header">
-                <Search className="search-icon-header" size={16} />
-                <input
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder=""
-                  className="search-input-header"
-                />
-                <button type="submit" className="search-button-header" disabled={loading}>
-                  {loading ? (
-                    <div className="loading-spinner-small" />
-                  ) : (
-                    <Search size={16} />
-                  )}
-                </button>
-              </div>
-            </form>
-            </div>
-            <div className="header-icons">
-              <Settings size={20} className="header-icon" />
-              <MoreVertical size={20} className="header-icon" />
-            </div>
-          </div>
-        </div>
-        
-        <div className="search-results-container">
-          <div className="search-tabs">
-            <div className="tab active">All</div>
-            <div className="tab">Images</div>
-            <div className="tab">Videos</div>
-            <div className="tab">News</div>
-            <div className="tab">Maps</div>
-          </div>
-          
-          {timeTaken && (
-            <div className="search-stats">
-              About {totalResults.toLocaleString()} results ({timeTaken})
-            </div>
-          )}
-
-          <div className="results-list">
-            {results && results.length > 0 ? (
-              results.map((result, index) => {
-                console.log('Rendering result:', index, result);
-                return (
-                <div key={index} className="result-item">
-                  <div className="result-header">
-                    <Globe size={16} className="globe-icon" />
-                    <span className="result-url">{formatURL(result.url) || 'No URL'}</span>
-                  </div>
-                  <h3 className="result-title">
-                    <a href={result.url} target="_blank" rel="noopener noreferrer">
-                      {result.title || 'No Title'}
-                    </a>
-                  </h3>
-                  <p className="result-snippet">{result.snippet || 'No snippet available'}</p>
-                </div>
-                );
-              })
-            ) : (
-              <div className="no-results">
-                <Search size={48} className="no-results-icon" />
-                <h3>No results found</h3>
-                <p>Try different keywords or check your spelling</p>
-                <button className="crawl-button" onClick={() => {
-                  fetch('http://localhost:8080/api/crawl', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: 'https://example.com', max_pages: 100 })
-                  });
-                  alert('Started crawling. Try searching again in a few seconds.');
-                }}>
-                  Start Crawling Data
-                </button>
-              </div>
-            )}
-          </div>
-
-          {totalPages > 1 && (
-            <div className="pagination">
-              <button className="page-button" onClick={prevPage} disabled={page === 1}>
-                &lt; Prev
-              </button>
-              <span className="current-page">
-                Page {page} of {totalPages}
-              </span>
-              <button className="page-button" onClick={nextPage} disabled={page === totalPages}>
-                Next &gt;
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="app">
+    <div className="App">
       <AbstractBackground />
-      <div className="home-container">
-        <div className="logo-section">
-          <h1 className="logo">SoulSearch</h1>
+      {searchView && <SearchBackground />}
+      <div className="overlay" style={{ zIndex: 2 }}>
+        <div className="header">
+          <div className="logo">Logo</div>
+          <div className="menu-icons">
+            <Globe />
+            <Settings />
+            <MoreVertical />
+          </div>
         </div>
-
-        <form onSubmit={handleSearch} className="search-form">
-          <div className="search-box">
-            <Search className="search-icon" size={20} />
+        <div className="search-container">
+          <form onSubmit={handleSearch} className="search-form">
+            <Search className="search-icon" />
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder=""
+              onKeyDown={handleKeyPress}
+              placeholder="Search..."
               className="search-input"
-              autoFocus
             />
-            <button type="submit" className="search-button" disabled={loading}>
-              {loading ? (
-                <div className="loading-spinner" />
-              ) : (
-                <Search size={20} />
-              )}
+          </form>
+        </div>
+        {hasSearched && (
+          <div className="results-info">
+            {loading ? (
+              <div>Loading...</div>
+            ) : (
+              <div>
+                {totalResults} results found in {timeTaken}
+              </div>
+            )}
+          </div>
+        )}
+        <div className="results-container">
+          {searchView && results.length === 0 && !loading && (
+            <div className="no-results">
+              No results found. Try a different search.
+            </div>
+          )}
+          {results.map((result, index) => (
+            <div key={index} className="result-card">
+              <div className="result-header">
+                <a href={result.url} className="result-title" target="_blank" rel="noopener noreferrer">
+                  {result.title}
+                </a>
+              </div>
+              <div className="result-body">
+                <div className="result-snippet">{result.snippet}</div>
+                <div className="result-meta">
+                  <span className="result-score">Score: {result.score}</span>
+                  {result.timestamp && (
+                    <span className="result-timestamp">{new Date(result.timestamp).toLocaleString()}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        {totalPages > 1 && (
+          <div className="pagination">
+            {Array.from({ length: totalPages }, (_, i) => (
+              <button
+                key={i}
+                onClick={() => setPage(i + 1)}
+                className={`page-button ${page === i + 1 ? 'active' : ''}`}
+              >
+                {i + 1}
+              </button>
+            ))}
+          </div>
+        )}
+        {searchView && (
+          <div className="home-button-container">
+            <button onClick={goHome} className="home-button">
+              Back to Home
             </button>
           </div>
-        </form>
+        )}
       </div>
     </div>
   );

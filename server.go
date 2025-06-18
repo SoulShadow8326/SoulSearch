@@ -59,8 +59,8 @@ func (s *Server) Start() {
 	fs := http.FileServer(http.Dir("./frontend/build"))
 	http.Handle("/", fs)
 
-	fmt.Printf("Starting SoulSearch server on http://localhost:%d...\n", s.port)
-	log.Printf("Starting SoulSearch HTTP server on port %d", s.port)
+	fmt.Printf("Starting ExSearch server on http://localhost:%d...\n", s.port)
+	log.Printf("Starting ExSearch HTTP server on port %d", s.port)
 
 	indexer := NewIndexer()
 	index := indexer.BuildIndex()
@@ -95,7 +95,7 @@ func (s *Server) Start() {
 		}
 	}()
 
-	fmt.Printf("SoulSearch server running on http://localhost:%d\n", s.port)
+	fmt.Printf("ExSearch server running on http://localhost:%d\n", s.port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", s.port), nil))
 }
 
@@ -272,7 +272,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]string{
 		"status":  "healthy",
-		"service": "soulsearch",
+		"service": "exsearch",
 	}
 	json.NewEncoder(w).Encode(response)
 }

@@ -26,10 +26,10 @@ func main() {
 		indexer.BuildIndex()
 	case "server":
 		server := NewServer(*port)
-		log.Printf("Starting SoulSearch HTTP server on port %d", *port)
+		log.Printf("Starting ExSearch HTTP server on port %d", *port)
 		server.Start()
 	case "proxy":
-		proxy := NewProxy(*port, "/tmp/soulsearch.sock")
+		proxy := NewProxy(*port, "/tmp/exsearch.sock")
 		proxy.Start()
 	default:
 		fmt.Println("Invalid mode. Use: server, proxy, crawl, or index")
