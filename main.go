@@ -26,7 +26,7 @@ func main() {
 		indexer.BuildIndex()
 	case "server":
 		server := NewServer(*port)
-		log.Printf("Starting ExSearch HTTP server on port %d", *port)
+		log.Printf("Starting SoulSearch HTTP server on port %d", *port)
 		server.Start()
 	case "proxy":
 		proxy := NewProxy(*port, "/tmp/exsearch.sock")

@@ -646,6 +646,13 @@ func (s *Server) preIndexCommonQueries() {
 			},
 		},
 		{
+			topic: "covid",
+			urls: []string{
+				"https://en.wikipedia.org/wiki/COVID-19",
+				"https://simple.wikipedia.org/wiki/COVID-19",
+			},
+		},
+		{
 			topic: "hackclub",
 			urls: []string{
 				"https://hackclub.com",
@@ -702,11 +709,11 @@ func (s *Server) preIndexCommonQueries() {
 }
 
 func (s *Server) hasAuthoritativeResults(results []SearchResult) bool {
-	if len(results) == 0 {
-		return false
+	if len(results) < 3 {
+		return false // Need at least 3 results to consider authoritative enough
 	}
 
-	// Check if the top result is from an authoritative source
+	// Check if we have multiple authoritative sources
 	authoritativeDomains := []string{
 		"wikipedia.org",
 		"hackclub.com",
@@ -719,15 +726,16 @@ func (s *Server) hasAuthoritativeResults(results []SearchResult) bool {
 		"smithsonianmag.com",
 	}
 
-	topResult := results[0]
-	for _, domain := range authoritativeDomains {
-		if strings.Contains(strings.ToLower(topResult.URL), domain) {
-			// Also check if the score is reasonably high
-			if topResult.Score > 15.0 {
-				return true
+	authoritativeCount := 0
+	for _, result := range results {
+		for _, domain := range authoritativeDomains {
+			if strings.Contains(strings.ToLower(result.URL), domain) && result.Score > 15.0 {
+				authoritativeCount++
+				break
 			}
 		}
 	}
 
-	return false
+	// Only consider it authoritative if we have multiple good sources
+	return authoritativeCount >= 2
 }

@@ -257,19 +257,6 @@ func (se *SearchEngine) Search(query string, limit int) ([]SearchResult, string)
 	return results, elapsed.String()
 }
 
-func (se *SearchEngine) updateTrendingQueries() {
-	se.mu.RLock()
-	recent := make([]string, 0)
-	cutoff := time.Now().Add(-24 * time.Hour)
-
-	for _, entry := range se.queryLog {
-		if entry.Timestamp.After(cutoff) {
-			recent = append(recent, entry.Query)
-		}
-	}
-	se.mu.RUnlock()
-}
-
 // SearchPaginated performs a paginated search with proper offset calculation
 func (se *SearchEngine) SearchPaginated(query string, page, limit int) ([]SearchResult, int, string) {
 	start := time.Now()
@@ -691,7 +678,8 @@ func (se *SearchEngine) scoreAdvancedResults(queryTerms []string, candidates map
 
 		relevanceScore := se.calculateIntelligentRelevance(queryTerms, originalQuery, doc)
 
-		if relevanceScore < 0.5 {
+		// Lower threshold to show more results
+		if relevanceScore < 0.1 {
 			continue
 		}
 
@@ -761,11 +749,11 @@ func (se *SearchEngine) calculateIntelligentRelevance(queryTerms []string, origi
 
 	positionScore := se.calculateTermPositions(queryTerms, doc.Content)
 
-	domainAuthorityScore := se.calculateDomainAuthority(doc.URL)
+	contentQualityScore := se.calculateContentQuality(doc)
 
 	totalScore := exactQueryInTitle + exactQueryInContent + termMatchScore +
 		termCoverageBonus + semanticScore + titleQualityScore +
-		contentDensityScore + positionScore + domainAuthorityScore
+		contentDensityScore + positionScore + contentQualityScore
 
 	penaltyScore := se.calculateRelevancePenalties(queryTerms, doc)
 
@@ -895,45 +883,78 @@ func (se *SearchEngine) calculateTermPositions(queryTerms []string, content stri
 	return score
 }
 
-func (se *SearchEngine) calculateDomainAuthority(url string) float64 {
-	urlLower := strings.ToLower(url)
+func (se *SearchEngine) calculateContentQuality(doc Document) float64 {
+	qualityScore := 0.0
 
-	// High-authority official domains get highest score
-	officialDomains := []string{
-		"hackclub.com", "hackclub.org", "hackclub.io", // Official Hack Club
-		"wikipedia.org", "github.com", "stackoverflow.com",
-		"reuters.com", "bbc.com", "npr.org", "apnews.com",
-		"nationalgeographic.com", "smithsonianmag.com", "scientificamerican.com",
-		"mayoclinic.org", "nih.gov", "cdc.gov",
+	// Content length indicates comprehensive coverage
+	contentLength := len(doc.Content)
+	if contentLength > 5000 {
+		qualityScore += 8.0
+	} else if contentLength > 2000 {
+		qualityScore += 6.0
+	} else if contentLength > 1000 {
+		qualityScore += 4.0
+	} else if contentLength > 500 {
+		qualityScore += 2.0
 	}
-	for _, domain := range officialDomains {
-		if strings.Contains(urlLower, domain) {
-			return 20.0 // Higher score for official/authoritative sources
+
+	// Title quality indicates well-structured content
+	titleLength := len(doc.Title)
+	if titleLength > 10 && titleLength < 100 {
+		qualityScore += 3.0
+	}
+
+	// Word diversity indicates rich content
+	words := strings.Fields(strings.ToLower(doc.Content))
+	uniqueWords := make(map[string]bool)
+	for _, word := range words {
+		if len(word) > 3 {
+			uniqueWords[word] = true
 		}
 	}
 
-	// Medium-authority domains
-	mediumAuthorityDomains := []string{"reddit.com", "medium.com", "techcrunch.com", "arstechnica.com"}
-	for _, domain := range mediumAuthorityDomains {
-		if strings.Contains(urlLower, domain) {
-			return 10.0
+	if len(words) > 0 {
+		diversityRatio := float64(len(uniqueWords)) / float64(len(words))
+		if diversityRatio > 0.4 {
+			qualityScore += 5.0
+		} else if diversityRatio > 0.3 {
+			qualityScore += 3.0
+		} else if diversityRatio > 0.2 {
+			qualityScore += 1.0
 		}
 	}
 
-	// Social media and secondary sources get lower scores
-	socialDomains := []string{"linkedin.com", "twitter.com", "facebook.com", "instagram.com"}
-	for _, domain := range socialDomains {
-		if strings.Contains(urlLower, domain) {
-			return 5.0 // Lower score for social media
+	// Check for structured content indicators
+	contentLower := strings.ToLower(doc.Content)
+	structureIndicators := []string{
+		"introduction", "overview", "definition", "explanation",
+		"background", "history", "characteristics", "features",
+		"description", "summary", "conclusion",
+	}
+
+	structureCount := 0
+	for _, indicator := range structureIndicators {
+		if strings.Contains(contentLower, indicator) {
+			structureCount++
 		}
 	}
+	qualityScore += float64(structureCount) * 0.5
 
-	// Educational and government
-	if strings.Contains(urlLower, ".edu") || strings.Contains(urlLower, ".gov") {
-		return 15.0
+	// Penalize low-quality indicators
+	lowQualityPatterns := []string{
+		"click here", "buy now", "limited time", "advertisement",
+		"popup", "loading", "javascript required", "cookies",
 	}
 
-	return 0.0
+	penaltyCount := 0
+	for _, pattern := range lowQualityPatterns {
+		if strings.Contains(contentLower, pattern) {
+			penaltyCount++
+		}
+	}
+	qualityScore -= float64(penaltyCount) * 2.0
+
+	return math.Max(0, qualityScore)
 }
 
 func (se *SearchEngine) calculateRelevancePenalties(queryTerms []string, doc Document) float64 {
