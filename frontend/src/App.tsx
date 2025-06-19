@@ -26,6 +26,7 @@ function App() {
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [dominoEffect, setDominoEffect] = useState(false);
 
   useEffect(() => {
     setTimeout(() => setShowContent(true), 500);
@@ -95,10 +96,20 @@ function App() {
       if (contentType && contentType.includes('application/json')) {
         const data: SearchResponse = await response.json();
         console.log('Search data received:', data);
-        setResults(data.results || []);
+        
+        // Clean up the results text
+        const cleanedResults = (data.results || []).map(result => ({
+          ...result,
+          title: decodeText(result.title || ''),
+          snippet: decodeText(result.snippet || ''),
+          url: result.url || ''
+        }));
+        
+        setResults(cleanedResults);
         setTotalResults(data.total || 0);
         setSearchTime(data.time_taken || '');
         setLoading(false);
+        setDominoEffect(false); // Stop domino effect when results are ready
       } else {
         throw new Error('Expected JSON response but got: ' + contentType);
       }
@@ -106,6 +117,7 @@ function App() {
       setError('Search failed. Please try again.');
       console.error('Search error:', err);
       setLoading(false);
+      setDominoEffect(false); // Stop domino effect on error
       setMode('home');
     }
   }, []);
@@ -113,6 +125,9 @@ function App() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setShowSuggestions(false);
+    
+    // Trigger domino effect and start search immediately
+    setDominoEffect(true);
     performSearch(query);
   };
 
@@ -138,6 +153,7 @@ function App() {
     setSuggestions([]);
     setShowSuggestions(false);
     setLoading(false);
+    setDominoEffect(false);
   };
 
   const GRID_COLS = dimensions.width < 768 ? 6 : 8;
@@ -361,10 +377,13 @@ function App() {
         
         const bottomUpDelay = (GRID_ROWS - 1 - row) * 80 + col * 20;
         
+        // Calculate domino effect delay and scale
+        const isDominoRow = dominoEffect && (row === (GRID_ROWS === 7 ? 4 : 3) || row === (GRID_ROWS === 7 ? 5 : 4));
+        
         grid.push(
           <div
             key={`${row}-${col}`}
-            className="grid-box"
+            className={`grid-box ${isDominoRow ? 'domino-bounce' : ''}`}
             style={{
               position: 'absolute',
               left: col * (boxWidth + gap),
@@ -413,6 +432,47 @@ function App() {
   const gridWidth = GRID_COLS * boxWidth + (GRID_COLS - 1) * gap;
   const gridHeight = GRID_ROWS * boxHeight + (GRID_ROWS - 1) * gap;
 
+  // Function to decode Unicode escape sequences and clean up text
+  const decodeText = (text: string): string => {
+    if (!text) return '';
+    
+    try {
+      let decoded = text;
+      
+      // Handle JSON-escaped characters
+      decoded = decoded.replace(/\\"/g, '"');
+      decoded = decoded.replace(/\\'/g, "'");
+      decoded = decoded.replace(/\\n/g, ' ');
+      decoded = decoded.replace(/\\r/g, ' ');
+      decoded = decoded.replace(/\\t/g, ' ');
+      
+      // Decode Unicode escape sequences
+      decoded = decoded.replace(/\\u([0-9a-fA-F]{4})/g, (match, p1) => {
+        return String.fromCharCode(parseInt(p1, 16));
+      });
+      
+      // Remove HTML tags more aggressively
+      decoded = decoded.replace(/<\/?[^>]+(>|$)/g, '');
+      decoded = decoded.replace(/&[a-zA-Z0-9#]+;/g, ' ');
+      
+      // Remove common HTML artifacts
+      decoded = decoded.replace(/\s*-\s*Search results\s*-\s*/gi, ' - ');
+      decoded = decoded.replace(/Word stemming is applied/gi, '');
+      decoded = decoded.replace(/TOP RESULT/gi, '');
+      
+      // Clean up extra whitespace
+      decoded = decoded.replace(/\s+/g, ' ').trim();
+      
+      // Remove remaining backslashes that are artifacts
+      decoded = decoded.replace(/\\+/g, '');
+      
+      return decoded;
+    } catch (error) {
+      console.error('Error decoding text:', error);
+      return text.replace(/\\u[0-9a-fA-F]{4}/g, '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    }
+  };
+
   return (
     <div style={{
       width: '100vw',
@@ -431,62 +491,6 @@ function App() {
       }}>
         {createGrid()}
       </div>
-      
-      {mode === 'results' && loading && (
-        <div style={{
-          position: 'fixed',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: '30vh',
-          background: 'linear-gradient(180deg, #fff3cd 0%, #f8f9fa 50%, #ffffff 100%)',
-          border: '4px solid #ffc107',
-          borderBottom: 'none',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          animation: 'slideUp 0.5s ease-out',
-          boxShadow: '0 -8px 0px rgba(255,193,7,0.3)'
-        }}>
-          <div style={{ 
-            textAlign: 'center',
-            background: '#fff',
-            padding: '32px 48px',
-            boxShadow: '6px 6px 0px rgba(0,0,0,0.3)',
-            border: 'none'
-          }}>
-            <div style={{
-              color: '#ffc107',
-              fontSize: '28px',
-              fontWeight: 800,
-              fontFamily: 'Trebuchet MS, monospace',
-              marginBottom: '16px',
-              textShadow: '2px 2px 0px rgba(255,193,7,0.2)'
-            }}>
-              SEARCHING...
-            </div>
-            <div style={{
-              color: '#444',
-              fontSize: '16px',
-              fontFamily: 'monospace',
-              fontWeight: 600,
-              marginBottom: '16px'
-            }}>
-              The sloth bear is digging through the web for you!
-            </div>
-            <div style={{
-              width: '60px',
-              height: '60px',
-              border: '6px solid #ffc107',
-              borderTop: '6px solid transparent',
-              borderRadius: '50%',
-              animation: 'spin 1s linear infinite',
-              margin: '0 auto'
-            }}></div>
-          </div>
-        </div>
-      )}
       
       {mode === 'results' && !loading && results.length > 0 && (
         <div style={{

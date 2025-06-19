@@ -93,10 +93,12 @@ body {
 
 @keyframes pulse {
   0%, 100% {
-    box-shadow: 0 0 0 0 rgba(41,119,245,0.4);
+    opacity: 0.3;
+    transform: scale(0.95);
   }
   50% {
-    box-shadow: 0 0 0 20px rgba(41,119,245,0);
+    opacity: 1;
+    transform: scale(1.05);
   }
 }
 
@@ -142,6 +144,19 @@ body {
   }
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes dominoPop {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15) translateY(-10px);
+    box-shadow: 0 20px 40px rgba(41,119,245,0.3);
+  }
+  100% {
+    transform: scale(1);
   }
 }
 
@@ -555,4 +570,14 @@ body {
 .back-to-home-button-no-results:active {
   transform: translateY(0px) scale(0.98);
   box-shadow: 0 2px 6px rgba(220,20,60,0.25);
+}
+
+@keyframes simpleBounce {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+.domino-bounce {
+  animation: simpleBounce 0.4s ease-in-out;
 }
