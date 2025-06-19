@@ -3,9 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -35,10 +35,6 @@ func NewServer(port int) *Server {
 	}
 
 	engine := NewSearchEngine()
-	log.Println("Loading search index...")
-	index := LoadIndex()
-	engine.LoadIndex(index)
-	log.Printf("Index loaded with %d terms and %d documents", len(index.Terms), len(index.Docs))
 
 	return &Server{
 		port:   port,
@@ -64,143 +60,18 @@ func (s *Server) spaHandler(fs http.Handler) http.HandlerFunc {
 }
 
 func (s *Server) Start() {
-	http.HandleFunc("/api/search", s.handleSearch)
 	http.HandleFunc("/api/dynamic-search", s.handleDynamicSearch)
-	http.HandleFunc("/search", s.handleDynamicSearch)
-	http.HandleFunc("/suggest", s.handleSuggestions)
 	http.HandleFunc("/api/suggestions", s.handleSuggestions)
-	http.HandleFunc("/api/health", s.handleHealth)
-	http.HandleFunc("/api/crawl", s.handleCrawl)
-	http.HandleFunc("/api/index", s.handleIndex)
-	http.HandleFunc("/api/analytics", s.handleAnalytics)
-	http.HandleFunc("/api/analytics/advanced", s.handleAdvancedAnalytics)
-	http.HandleFunc("/api/analytics/trends", s.handleQueryTrends)
 
 	fs := http.FileServer(http.Dir("./frontend/build"))
 	http.Handle("/static/", fs)
 	http.HandleFunc("/", s.spaHandler(fs))
 
-	fmt.Printf("Starting ExSearch server on http://localhost:%d...\n", s.port)
-	log.Printf("Starting ExSearch HTTP server on port %d", s.port)
+	fmt.Printf("Starting SoulSearch server on http://localhost:%d...\n", s.port)
+	log.Printf("Starting SoulSearch HTTP server on port %d", s.port)
 
-	indexer := NewIndexer()
-	index := indexer.BuildIndex()
-	if index != nil && len(index.Docs) > 0 {
-		s.engine.LoadIndex(index)
-		log.Printf("Loaded existing index with %d documents", len(index.Docs))
-	} else {
-		log.Printf("No existing index found, starting with empty search engine")
-	}
-
-	go func() {
-		time.Sleep(2 * time.Second)
-		// crawling disabled: CrawlFromSeed method removed
-
-		sites := []string{
-			"https://news.ycombinator.com",
-			"https://en.wikipedia.org/wiki/Main_Page",
-			"https://github.com/trending",
-			"https://stackoverflow.com/questions",
-			"https://www.reddit.com/r/programming",
-		}
-
-		for range sites {
-			time.Sleep(1 * time.Second)
-		}
-
-		time.Sleep(10 * time.Second)
-		newIndex := indexer.BuildIndex()
-		if newIndex != nil && len(newIndex.Docs) > 0 {
-			s.engine.LoadIndex(newIndex)
-			log.Printf("Updated index with %d documents", len(newIndex.Docs))
-		}
-	}()
-
-	fmt.Printf("ExSearch server running on http://localhost:%d\n", s.port)
+	fmt.Printf("SoulSearch server running on http://localhost:%d\n", s.port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", s.port), nil))
-}
-
-func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Received search request: %s %s", r.Method, r.URL.Path)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	if r.Method == "OPTIONS" {
-		return
-	}
-
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req SearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("Failed to decode JSON body: %v", err)
-		query := r.URL.Query().Get("q")
-		if query == "" {
-			http.Error(w, "Query parameter required", http.StatusBadRequest)
-			return
-		}
-		req.Query = query
-		req.Page = 1
-		req.Limit = 10
-
-		if pageStr := r.URL.Query().Get("page"); pageStr != "" {
-			if page, err := strconv.Atoi(pageStr); err == nil {
-				req.Page = page
-			}
-		}
-
-		if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-			if limit, err := strconv.Atoi(limitStr); err == nil {
-				req.Limit = limit
-			}
-		}
-	}
-
-	log.Printf("Search request parsed: query='%s', page=%d, limit=%d", req.Query, req.Page, req.Limit)
-
-	if req.Query == "" {
-		http.Error(w, "Query cannot be empty", http.StatusBadRequest)
-		return
-	}
-
-	if req.Page < 1 {
-		req.Page = 1
-	}
-	if req.Limit < 1 || req.Limit > 100 {
-		req.Limit = 10
-	}
-
-	results, total, timeTaken := s.engine.SearchPaginated(req.Query, req.Page, req.Limit)
-
-	log.Printf("Search completed in %s, found %d results on page %d of total %d", timeTaken, len(results), req.Page, total)
-
-	totalPages := (total + req.Limit - 1) / req.Limit
-	if totalPages == 0 {
-		totalPages = 1
-	}
-
-	response := SearchResponse{
-		Results:    results,
-		Total:      total,
-		Page:       req.Page,
-		TotalPages: totalPages,
-		TimeTaken:  timeTaken,
-	}
-
-	log.Printf("Sending response with %d results", len(response.Results))
-
-	for i, result := range response.Results {
-		log.Printf("Result %d: URL=%s, Title=%s, Snippet=%s, Score=%.4f",
-			i+1, result.URL, result.Title, result.Snippet, result.Score)
-	}
-
-	json.NewEncoder(w).Encode(response)
 }
 
 func (s *Server) handleSuggestions(w http.ResponseWriter, r *http.Request) {
@@ -251,109 +122,6 @@ func (s *Server) handleSuggestions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	response := map[string]string{
-		"status":  "healthy",
-		"service": "exsearch",
-	}
-	json.NewEncoder(w).Encode(response)
-}
-
-func (s *Server) handleCrawl(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req struct {
-		URL      string `json:"url"`
-		MaxPages int    `json:"max_pages"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
-		return
-	}
-
-	if req.URL == "" {
-		req.URL = "https://example.com"
-	}
-	if req.MaxPages == 0 {
-		req.MaxPages = 100
-	}
-
-	response := map[string]interface{}{
-		"status":    "started",
-		"url":       req.URL,
-		"max_pages": req.MaxPages,
-	}
-	json.NewEncoder(w).Encode(response)
-}
-
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	indexer := NewIndexer()
-	go indexer.BuildIndex()
-
-	response := map[string]string{
-		"status": "indexing started",
-	}
-	json.NewEncoder(w).Encode(response)
-}
-
-func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	analytics := s.engine.GetAnalytics()
-	json.NewEncoder(w).Encode(analytics)
-}
-
-func (s *Server) handleAdvancedAnalytics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	analytics := s.engine.GetAdvancedAnalytics()
-	json.NewEncoder(w).Encode(analytics)
-}
-
-func (s *Server) handleQueryTrends(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	trends := s.engine.GetQueryTrends()
-	json.NewEncoder(w).Encode(trends)
-}
-
-// handleDynamicSearch performs real-time crawling and indexing based on search query
 func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Received dynamic search request: %s %s", r.Method, r.URL.Path)
 
@@ -377,61 +145,336 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Starting dynamic search for query: '%s'", query)
+	log.Printf("Starting real-time crawling and indexing for query: '%s'", query)
 	startTime := time.Now()
 
-	// Force fresh crawling - ignore existing results
-	log.Printf("Starting fresh crawling for: '%s'", query)
+	searchURLs := generateSearchURLs(query)
+	pages := s.crawlPages(searchURLs)
 
-	// Simulate the sloth bear animation time while "crawling"
-	time.Sleep(8 * time.Second)
+	log.Printf("Crawled %d pages", len(pages))
 
-	// Generate fresh mock results to demonstrate the concept
-	mockResults := generateMockResults(query)
-	timeTaken := time.Since(startTime).String()
+	if len(pages) == 0 {
+		log.Printf("No pages crawled, returning empty results")
+		response := SearchResponse{
+			Results:    []SearchResult{},
+			Total:      0,
+			Page:       1,
+			TotalPages: 0,
+			TimeTaken:  time.Since(startTime).String(),
+		}
+		json.NewEncoder(w).Encode(response)
+		return
+	}
 
-	log.Printf("Dynamic search completed in %s, generated %d fresh results", timeTaken, len(mockResults))
+	index := s.indexPages(pages)
+	s.engine.LoadIndex(index)
+
+	results, total, timeTaken := s.engine.SearchPaginated(query, 1, 10)
+
+	for i := range results {
+		if results[i].Snippet == "" {
+			results[i].Snippet = s.generateSimpleSnippet(results[i].URL, query)
+		}
+	}
+
+	log.Printf("Dynamic search completed in %s, found %d results", time.Since(startTime).String(), len(results))
 
 	response := SearchResponse{
-		Results:    mockResults,
-		Total:      len(mockResults),
+		Results:    results,
+		Total:      total,
 		Page:       1,
-		TotalPages: 1,
+		TotalPages: (total + 9) / 10,
 		TimeTaken:  timeTaken,
 	}
 
 	json.NewEncoder(w).Encode(response)
 }
 
-// generateMockResults creates mock search results for demonstration
-func generateMockResults(query string) []SearchResult {
-	// This is a simplified mock - in a real implementation, this would be replaced
-	// with actual crawling and indexing of web content based on the search query
-
-	mockResults := []SearchResult{
-		{
-			URL:     "https://en.wikipedia.org/wiki/" + strings.ReplaceAll(query, " ", "_"),
-			Title:   "Wikipedia: " + strings.Title(query),
-			Snippet: "Learn more about " + query + " from this comprehensive Wikipedia article with detailed information and references.",
-			Score:   0.95,
-			Rank:    1,
-		},
-		{
-			URL:     "https://stackoverflow.com/questions/tagged/" + strings.ReplaceAll(query, " ", "-"),
-			Title:   "Stack Overflow: " + strings.Title(query) + " Questions",
-			Snippet: "Find answers and solutions related to " + query + " from the developer community on Stack Overflow.",
-			Score:   0.87,
-			Rank:    2,
-		},
-		{
-			URL:     "https://github.com/search?q=" + query,
-			Title:   "GitHub: " + strings.Title(query) + " Repositories",
-			Snippet: "Explore open source projects and code repositories related to " + query + " on GitHub.",
-			Score:   0.82,
-			Rank:    3,
-		},
+func (s *Server) crawlPages(urls []string) []Page {
+	var pages []Page
+	client := &http.Client{
+		Timeout: 10 * time.Second,
 	}
 
-	log.Printf("Generated %d mock results for query '%s'", len(mockResults), query)
-	return mockResults
+	for _, rawURL := range urls {
+		log.Printf("Crawling URL: %s", rawURL)
+
+		resp, err := client.Get(rawURL)
+		if err != nil {
+			log.Printf("Error crawling %s: %v", rawURL, err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			log.Printf("Non-200 status for %s: %d", rawURL, resp.StatusCode)
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("Error reading body for %s: %v", rawURL, err)
+			continue
+		}
+
+		content := string(body)
+		title := extractTitle(content)
+		cleanContent := extractContent(content)
+
+		if len(cleanContent) > 50 {
+			page := Page{
+				URL:     rawURL,
+				Title:   title,
+				Content: cleanContent,
+				Crawled: time.Now(),
+			}
+			pages = append(pages, page)
+			log.Printf("Successfully crawled: %s (title: %s, content length: %d)", rawURL, title, len(cleanContent))
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return pages
+}
+
+func (s *Server) indexPages(pages []Page) *InvertedIndex {
+	index := &InvertedIndex{
+		Terms: make(map[string][]TermFreq),
+		Docs:  make(map[string]Document),
+	}
+
+	stopWords := loadStopWords()
+
+	for _, page := range pages {
+		doc := Document{
+			URL:      page.URL,
+			Title:    page.Title,
+			Content:  page.Content,
+			Length:   len(strings.Fields(page.Content)),
+			PageRank: 1.0,
+		}
+
+		index.Docs[page.URL] = doc
+
+		allText := page.Title + " " + page.Content
+		words := tokenize(allText)
+
+		termFreqs := make(map[string]int)
+		for _, word := range words {
+			word = strings.ToLower(word)
+			if len(word) > 2 && !stopWords[word] {
+				termFreqs[word]++
+			}
+		}
+
+		for term, freq := range termFreqs {
+			score := float64(freq) / float64(len(words))
+			if strings.Contains(strings.ToLower(page.Title), term) {
+				score *= 2.0
+			}
+
+			index.Terms[term] = append(index.Terms[term], TermFreq{
+				URL:   page.URL,
+				Score: score,
+			})
+		}
+	}
+
+	return index
+}
+
+func extractTitle(html string) string {
+	start := strings.Index(strings.ToLower(html), "<title>")
+	if start == -1 {
+		return "Untitled"
+	}
+	start += 7
+
+	end := strings.Index(strings.ToLower(html[start:]), "</title>")
+	if end == -1 {
+		return "Untitled"
+	}
+
+	title := html[start : start+end]
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return "Untitled"
+	}
+
+	return title
+}
+
+func extractContent(html string) string {
+	content := html
+
+	content = removeHtmlTags(content)
+	content = strings.ReplaceAll(content, "\n", " ")
+	content = strings.ReplaceAll(content, "\t", " ")
+
+	words := strings.Fields(content)
+	if len(words) > 500 {
+		words = words[:500]
+	}
+
+	return strings.Join(words, " ")
+}
+
+func removeHtmlTags(html string) string {
+	var result strings.Builder
+	inTag := false
+
+	for _, char := range html {
+		if char == '<' {
+			inTag = true
+			continue
+		}
+		if char == '>' {
+			inTag = false
+			continue
+		}
+		if !inTag {
+			result.WriteRune(char)
+		}
+	}
+
+	return result.String()
+}
+
+func tokenize(text string) []string {
+	var words []string
+	var current strings.Builder
+
+	for _, char := range text {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') {
+			current.WriteRune(char)
+		} else {
+			if current.Len() > 0 {
+				words = append(words, current.String())
+				current.Reset()
+			}
+		}
+	}
+
+	if current.Len() > 0 {
+		words = append(words, current.String())
+	}
+
+	return words
+}
+
+func loadStopWords() map[string]bool {
+	stopWords := map[string]bool{
+		"the": true, "a": true, "an": true, "and": true, "or": true, "but": true,
+		"in": true, "on": true, "at": true, "to": true, "for": true, "of": true,
+		"with": true, "by": true, "is": true, "are": true, "was": true, "were": true,
+		"be": true, "been": true, "have": true, "has": true, "had": true, "do": true,
+		"does": true, "did": true, "will": true, "would": true, "could": true, "should": true,
+		"this": true, "that": true, "these": true, "those": true, "it": true, "they": true,
+		"he": true, "she": true, "we": true, "you": true, "i": true, "me": true, "my": true,
+		"from": true, "as": true, "all": true, "any": true, "can": true, "may": true,
+	}
+	return stopWords
+}
+
+func generateSearchURLs(query string) []string {
+	queryEncoded := strings.ReplaceAll(query, " ", "%20")
+
+	urls := []string{
+		"https://en.wikipedia.org/wiki/Special:Search?search=" + queryEncoded,
+	}
+
+	if len(strings.Fields(query)) == 1 {
+		directWiki := "https://en.wikipedia.org/wiki/" + strings.Title(query)
+		urls = append(urls, directWiki)
+	}
+
+	techTerms := map[string]bool{
+		"programming": true, "code": true, "javascript": true, "python": true, "go": true,
+		"react": true, "node": true, "api": true, "github": true, "git": true, "docker": true,
+		"kubernetes": true, "database": true, "sql": true, "web": true, "framework": true,
+		"library": true, "algorithm": true, "data": true, "structure": true, "software": true,
+		"development": true, "frontend": true, "backend": true, "fullstack": true,
+	}
+
+	queryLower := strings.ToLower(query)
+	for term := range techTerms {
+		if strings.Contains(queryLower, term) {
+			urls = append(urls, "https://stackoverflow.com/search?q="+queryEncoded)
+			urls = append(urls, "https://github.com/search?q="+queryEncoded+"&type=repositories")
+			break
+		}
+	}
+
+	return urls
+}
+
+func (s *Server) generateSimpleSnippet(url, query string) string {
+	s.engine.mu.RLock()
+	defer s.engine.mu.RUnlock()
+
+	doc, exists := s.engine.index.Docs[url]
+	if !exists {
+		return "No content available"
+	}
+
+	content := doc.Content
+	if content == "" {
+		return "No content available"
+	}
+
+	queryTerms := strings.Fields(strings.ToLower(query))
+	sentences := strings.Split(content, ".")
+
+	bestSentence := ""
+	maxMatches := 0
+
+	for _, sentence := range sentences {
+		sentence = strings.TrimSpace(sentence)
+		if len(sentence) < 20 || len(sentence) > 300 {
+			continue
+		}
+
+		sentenceLower := strings.ToLower(sentence)
+		matches := 0
+
+		for _, term := range queryTerms {
+			if strings.Contains(sentenceLower, term) {
+				matches++
+			}
+		}
+
+		if matches > maxMatches {
+			maxMatches = matches
+			bestSentence = sentence
+		}
+	}
+
+	if bestSentence == "" && len(sentences) > 0 {
+		for _, sentence := range sentences {
+			sentence = strings.TrimSpace(sentence)
+			if len(sentence) >= 50 && len(sentence) <= 200 {
+				bestSentence = sentence
+				break
+			}
+		}
+	}
+
+	if bestSentence == "" {
+		words := strings.Fields(content)
+		if len(words) > 20 {
+			bestSentence = strings.Join(words[:20], " ") + "..."
+		} else {
+			bestSentence = content
+		}
+	}
+
+	if len(bestSentence) > 200 {
+		words := strings.Fields(bestSentence)
+		if len(words) > 25 {
+			bestSentence = strings.Join(words[:25], " ") + "..."
+		}
+	}
+
+	return bestSentence
 }
