@@ -53,11 +53,22 @@ function App() {
     }
     
     try {
-      const response = await fetch(`http://localhost:8080/suggest?q=${encodeURIComponent(searchQuery)}`);
+      const response = await fetch(`http://localhost:8080/api/suggestions?q=${encodeURIComponent(searchQuery)}`);
       if (response.ok) {
-        const data = await response.json();
-        setSuggestions(data.suggestions || []);
-        setShowSuggestions((data.suggestions || []).length > 0);
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await response.json();
+          setSuggestions(data.suggestions || []);
+          setShowSuggestions((data.suggestions || []).length > 0);
+        } else {
+          console.error('Suggestions error: Expected JSON response but got:', contentType);
+          setSuggestions([]);
+          setShowSuggestions(false);
+        }
+      } else {
+        console.error('Suggestions error: HTTP', response.status, response.statusText);
+        setSuggestions([]);
+        setShowSuggestions(false);
       }
     } catch (err) {
       console.error('Suggestions error:', err);
@@ -74,14 +85,23 @@ function App() {
     setMode('results');
     
     try {
+      console.log('Performing search for:', searchQuery);
       const response = await fetch(`http://localhost:8080/api/dynamic-search?q=${encodeURIComponent(searchQuery)}`);
-      if (!response.ok) throw new Error('Search failed');
+      console.log('Search response status:', response.status);
       
-      const data: SearchResponse = await response.json();
-      setResults(data.results || []);
-      setTotalResults(data.total || 0);
-      setSearchTime(data.time_taken || '');
-      setLoading(false);
+      if (!response.ok) throw new Error(`Search failed with status: ${response.status}`);
+      
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const data: SearchResponse = await response.json();
+        console.log('Search data received:', data);
+        setResults(data.results || []);
+        setTotalResults(data.total || 0);
+        setSearchTime(data.time_taken || '');
+        setLoading(false);
+      } else {
+        throw new Error('Expected JSON response but got: ' + contentType);
+      }
     } catch (err) {
       setError('Search failed. Please try again.');
       console.error('Search error:', err);
@@ -233,7 +253,7 @@ function App() {
                   fontSize: mode === 'results' ? (dimensions.width < 768 ? 13 : 15) : (dimensions.width < 768 ? 15 : 17),
                   border: '1px solid #2977F5',
                   outline: 'none',
-                  background: 'transparent',
+                  background: 'rgb(214, 232, 250)',
                   color: '#2977F5',
                   fontWeight: 600,
                   padding: mode === 'results' ? (dimensions.width < 768 ? 8 : 10) : (dimensions.width < 768 ? 10 : 12),
@@ -257,8 +277,8 @@ function App() {
                 type="submit"
                 disabled={loading || !query.trim()}
                 style={{
-                  background: 'transparent',
-                  color: '#2977F5',
+                  background: 'rgb(90, 139, 200)',
+                  color: 'white',
                   border: '1px solid #2977F5',
                   borderRadius: 4,
                   padding: mode === 'results' ? (dimensions.width < 768 ? '4px 8px' : '6px 12px') : (dimensions.width < 768 ? '6px 12px' : '8px 16px'),
@@ -411,6 +431,62 @@ function App() {
       }}>
         {createGrid()}
       </div>
+      
+      {mode === 'results' && loading && (
+        <div style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: '30vh',
+          background: 'linear-gradient(180deg, #fff3cd 0%, #f8f9fa 50%, #ffffff 100%)',
+          border: '4px solid #ffc107',
+          borderBottom: 'none',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          animation: 'slideUp 0.5s ease-out',
+          boxShadow: '0 -8px 0px rgba(255,193,7,0.3)'
+        }}>
+          <div style={{ 
+            textAlign: 'center',
+            background: '#fff',
+            padding: '32px 48px',
+            boxShadow: '6px 6px 0px rgba(0,0,0,0.3)',
+            border: 'none'
+          }}>
+            <div style={{
+              color: '#ffc107',
+              fontSize: '28px',
+              fontWeight: 800,
+              fontFamily: 'Trebuchet MS, monospace',
+              marginBottom: '16px',
+              textShadow: '2px 2px 0px rgba(255,193,7,0.2)'
+            }}>
+              SEARCHING...
+            </div>
+            <div style={{
+              color: '#444',
+              fontSize: '16px',
+              fontFamily: 'monospace',
+              fontWeight: 600,
+              marginBottom: '16px'
+            }}>
+              The sloth bear is digging through the web for you!
+            </div>
+            <div style={{
+              width: '60px',
+              height: '60px',
+              border: '6px solid #ffc107',
+              borderTop: '6px solid transparent',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite',
+              margin: '0 auto'
+            }}></div>
+          </div>
+        </div>
+      )}
       
       {mode === 'results' && !loading && results.length > 0 && (
         <div style={{

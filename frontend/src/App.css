@@ -136,6 +136,15 @@ body {
   }
 }
 
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .loading-shimmer {
   background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
   background-size: 200% 100%;
@@ -254,7 +263,7 @@ body {
   flex: 1;
   border: none;
   outline: none;
-  background: transparent;
+  background: rgb(214, 232, 250);
   color: #2977F5;
   font-size: 1.25rem;
   font-weight: 500;
@@ -275,7 +284,7 @@ body {
 }
 
 .search-button {
-  background: none;
+  background: rgb(214, 232, 250);
   color: #2977F5;
   border: none;
   border-radius: 0 2.5em 2.5em 0;
@@ -299,7 +308,7 @@ body {
 }
 
 .search-button:hover, .search-button:focus {
-  background: none;
+  background: rgb(214, 232, 250);
   color: #2977F5;
 }
 
