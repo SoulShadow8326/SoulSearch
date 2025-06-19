@@ -289,29 +289,6 @@ function App() {
                   setTimeout(() => setShowSuggestions(false), 150);
                 }}
               />
-              <button
-                type="submit"
-                disabled={loading || !query.trim()}
-                style={{
-                  background: 'rgb(90, 139, 200)',
-                  color: 'white',
-                  border: '1px solid #2977F5',
-                  borderRadius: 4,
-                  padding: mode === 'results' ? (dimensions.width < 768 ? '4px 8px' : '6px 12px') : (dimensions.width < 768 ? '6px 12px' : '8px 16px'),
-                  fontWeight: 700,
-                  fontSize: mode === 'results' ? (dimensions.width < 768 ? 10 : 12) : (dimensions.width < 768 ? 12 : 14),
-                  width: 'auto',
-                  fontFamily: 'monospace',
-                  textTransform: 'uppercase',
-                  letterSpacing: 1,
-                  cursor: loading || !query.trim() ? 'not-allowed' : 'pointer',
-                  opacity: loading || !query.trim() ? 0.5 : 1,
-                  margin: '0 auto',
-                  display: 'block'
-                }}
-              >
-                {loading ? 'Searching...' : 'Search'}
-              </button>
               {showSuggestions && mode === 'home' && (
                 <div style={{
                   position: 'absolute',

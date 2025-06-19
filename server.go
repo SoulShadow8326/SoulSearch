@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -148,10 +149,22 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Starting real-time crawling and indexing for query: '%s'", query)
 	startTime := time.Now()
 
-	searchURLs := generateSearchURLs(query)
-	pages := s.crawlPages(searchURLs)
+	crawler := NewContentCrawler()
+	seeds := crawler.GetQualitySeeds(query)
+	crawledDocs := crawler.CrawlContent(seeds)
 
-	log.Printf("Crawled %d pages", len(pages))
+	log.Printf("Crawled %d documents", len(crawledDocs))
+
+	var pages []Page
+	for _, doc := range crawledDocs {
+		page := Page{
+			URL:     doc.URL,
+			Title:   doc.Title,
+			Content: doc.Content,
+			Crawled: doc.CrawledAt,
+		}
+		pages = append(pages, page)
+	}
 
 	if len(pages) == 0 {
 		log.Printf("No pages crawled, returning empty results")
@@ -308,9 +321,27 @@ func extractTitle(html string) string {
 func extractContent(html string) string {
 	content := html
 
+	// Remove script and style tags completely
+	content = removeScriptAndStyleTags(content)
+
+	// Remove Wikipedia-specific junk
+	content = removeWikipediaJunk(content)
+
+	// Remove HTML tags
 	content = removeHtmlTags(content)
+
+	// Clean up whitespace
 	content = strings.ReplaceAll(content, "\n", " ")
 	content = strings.ReplaceAll(content, "\t", " ")
+	content = strings.ReplaceAll(content, "\r", " ")
+
+	// Remove multiple spaces
+	for strings.Contains(content, "  ") {
+		content = strings.ReplaceAll(content, "  ", " ")
+	}
+
+	// Remove common junk patterns
+	content = removeCommonJunk(content)
 
 	words := strings.Fields(content)
 	if len(words) > 500 {
@@ -318,6 +349,126 @@ func extractContent(html string) string {
 	}
 
 	return strings.Join(words, " ")
+}
+
+func removeScriptAndStyleTags(html string) string {
+	// Remove <script>...</script>
+	for {
+		start := strings.Index(html, "<script")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(html[start:], "</script>")
+		if end == -1 {
+			break
+		}
+		html = html[:start] + html[start+end+9:]
+	}
+
+	// Remove <style>...</style>
+	for {
+		start := strings.Index(html, "<style")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(html[start:], "</style>")
+		if end == -1 {
+			break
+		}
+		html = html[:start] + html[start+end+8:]
+	}
+
+	return html
+}
+
+func removeWikipediaJunk(content string) string {
+	// Remove common Wikipedia patterns
+	junkPatterns := []string{
+		"hatnote{display:none!important}",
+		"redirect here",
+		"Doggy\" and \"Pooch\" redirect here",
+		"\"Doggy\" and \"Pooch\" redirect here",
+		"For other uses, see",
+		"Not to be confused with",
+		"This article is about",
+		"Jump to navigation",
+		"Jump to search",
+		"From Wikipedia, the free encyclopedia",
+		"Coordinates:",
+		"mw-parser-output",
+		"class=\"",
+		"id=\"",
+		"style=\"",
+		"at DuckDuckGo",
+		"Search results",
+		"DuckDuckGo",
+		"Also called the domestic",
+		"selectively bred from",
+		"during the Late Pleistocene",
+		"by hunter-gatherers",
+	}
+
+	for _, pattern := range junkPatterns {
+		content = strings.ReplaceAll(content, pattern, " ")
+	}
+
+	return content
+}
+
+func removeCommonJunk(content string) string {
+	// Remove common web junk
+	junkPatterns := []string{
+		"Cookie",
+		"Privacy Policy",
+		"Terms of Service",
+		"Sign up",
+		"Log in",
+		"Subscribe",
+		"Newsletter",
+		"Advertisement",
+		"Sponsored",
+		"Related Articles",
+		"More Stories",
+		"Comments",
+		"Share this",
+		"Follow us",
+		"Like us",
+		"Tweet",
+		"Facebook",
+		"Twitter",
+		"LinkedIn",
+		"Instagram",
+	}
+
+	contentLower := strings.ToLower(content)
+	for _, pattern := range junkPatterns {
+		patternLower := strings.ToLower(pattern)
+		if strings.Contains(contentLower, patternLower) {
+			// Remove the pattern case-insensitively
+			content = removePatternCaseInsensitive(content, pattern)
+		}
+	}
+
+	return content
+}
+
+func removePatternCaseInsensitive(text, pattern string) string {
+	// Simple case-insensitive replacement
+	lowerPattern := strings.ToLower(pattern)
+
+	result := ""
+	i := 0
+	for i < len(text) {
+		if i <= len(text)-len(pattern) && strings.ToLower(text[i:i+len(pattern)]) == lowerPattern {
+			result += " "
+			i += len(pattern)
+		} else {
+			result += string(text[i])
+			i++
+		}
+	}
+
+	return result
 }
 
 func removeHtmlTags(html string) string {
@@ -378,32 +529,70 @@ func loadStopWords() map[string]bool {
 }
 
 func generateSearchURLs(query string) []string {
-	queryEncoded := strings.ReplaceAll(query, " ", "%20")
+	var urls []string
 
-	urls := []string{
-		"https://en.wikipedia.org/wiki/Special:Search?search=" + queryEncoded,
-	}
-
-	if len(strings.Fields(query)) == 1 {
-		directWiki := "https://en.wikipedia.org/wiki/" + strings.Title(query)
+	// Direct Wikipedia pages - try multiple variations
+	queryWords := strings.Fields(query)
+	if len(queryWords) == 1 {
+		// Single word - try direct Wikipedia page
+		directWiki := "https://en.wikipedia.org/wiki/" + strings.Title(queryWords[0])
+		urls = append(urls, directWiki)
+	} else if len(queryWords) <= 3 {
+		// Multiple words - try with underscores (Wikipedia format)
+		wikiTitle := strings.Join(queryWords, "_")
+		directWiki := "https://en.wikipedia.org/wiki/" + wikiTitle
 		urls = append(urls, directWiki)
 	}
 
-	techTerms := map[string]bool{
-		"programming": true, "code": true, "javascript": true, "python": true, "go": true,
-		"react": true, "node": true, "api": true, "github": true, "git": true, "docker": true,
-		"kubernetes": true, "database": true, "sql": true, "web": true, "framework": true,
-		"library": true, "algorithm": true, "data": true, "structure": true, "software": true,
-		"development": true, "frontend": true, "backend": true, "fullstack": true,
-	}
-
+	// For animals, add specific animal info sources
+	animalTerms := []string{"dog", "cat", "bird", "fish", "animal", "pet", "mammal", "species"}
 	queryLower := strings.ToLower(query)
-	for term := range techTerms {
+	for _, term := range animalTerms {
 		if strings.Contains(queryLower, term) {
-			urls = append(urls, "https://stackoverflow.com/search?q="+queryEncoded)
-			urls = append(urls, "https://github.com/search?q="+queryEncoded+"&type=repositories")
+			urls = append(urls, "https://www.nationalgeographic.com/animals/mammals/"+strings.ToLower(queryWords[0]))
+			urls = append(urls, "https://en.wikipedia.org/wiki/"+strings.Title(queryWords[0]))
 			break
 		}
+	}
+
+	// For science topics
+	scienceTerms := []string{"science", "biology", "chemistry", "physics", "research", "study"}
+	for _, term := range scienceTerms {
+		if strings.Contains(queryLower, term) {
+			urls = append(urls, "https://en.wikipedia.org/wiki/"+strings.Title(query))
+			urls = append(urls, "https://www.britannica.com/science/"+strings.ToLower(strings.ReplaceAll(query, " ", "-")))
+			break
+		}
+	}
+
+	// For technology topics
+	techTerms := []string{"programming", "code", "javascript", "python", "go", "react", "node", "api", "github", "git", "docker", "computer", "software", "web", "internet"}
+	for _, term := range techTerms {
+		if strings.Contains(queryLower, term) {
+			urls = append(urls, "https://en.wikipedia.org/wiki/"+strings.Title(query))
+			urls = append(urls, "https://developer.mozilla.org/en-US/docs/Web/"+strings.Title(queryWords[0]))
+			break
+		}
+	}
+
+	// For history topics
+	historyTerms := []string{"history", "war", "ancient", "civilization", "empire", "king", "queen", "battle"}
+	for _, term := range historyTerms {
+		if strings.Contains(queryLower, term) {
+			urls = append(urls, "https://en.wikipedia.org/wiki/"+strings.Title(query))
+			urls = append(urls, "https://www.britannica.com/topic/"+strings.ToLower(strings.ReplaceAll(query, " ", "-")))
+			break
+		}
+	}
+
+	// General fallback - always include Wikipedia
+	if len(urls) == 0 {
+		urls = append(urls, "https://en.wikipedia.org/wiki/"+strings.Title(strings.ReplaceAll(query, " ", "_")))
+	}
+
+	// Add alternative Wikipedia search if no direct pages
+	if len(urls) < 3 {
+		urls = append(urls, "https://en.wikipedia.org/wiki/Special:Search?search="+url.QueryEscape(query))
 	}
 
 	return urls

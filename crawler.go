@@ -1,8 +1,14 @@
 package main
 
 import (
+	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"regexp"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -27,44 +33,33 @@ type Page struct {
 	ExtraMeta   map[string]string
 }
 
-type URLInfo struct {
-	URL      string
-	Depth    int
-	Priority float64
-	Source   string
-	Retries  int
+type SeedURL struct {
+	URL         string
+	Priority    float64
+	Topic       string
+	Source      string
+	Reliability float64
 }
 
-type CrawlStats struct {
-	TotalRequests    int
-	SuccessfulCrawls int
-	FailedCrawls     int
-	DuplicatePages   int
-	BlockedPages     int
-	LowQualityPages  int
-	TotalSize        int64
-	AverageRespTime  time.Duration
+type CrawledDocument struct {
+	URL         string
+	Title       string
+	Content     string
+	Description string
+	Keywords    []string
+	Links       []string
+	Language    string
+	Quality     float64
+	CrawledAt   time.Time
+	Size        int
+	Domain      string
 }
 
-type Crawler struct {
-	visited      map[string]bool
-	queue        []*URLInfo
-	maxPages     int
-	maxDepth     int
-	pages        []Page
-	mutex        sync.RWMutex
+type ContentCrawler struct {
 	client       *http.Client
-	robotsCache  map[string]bool
 	domainDelays map[string]time.Time
-	stats        CrawlStats
-	contentTypes map[string]bool
-	excludeRegex []*regexp.Regexp
-	includeRegex []*regexp.Regexp
-	workers      int
-	workerChan   chan *URLInfo
-	resultChan   chan *Page
-	stopChan     chan bool
-	wg           sync.WaitGroup
+	visited      map[string]bool
+	mutex        sync.RWMutex
 }
 
 type ContentType int
@@ -80,842 +75,605 @@ const (
 	ContentTypeReference
 )
 
-// Real-time Content Streaming and Event Processing System
-type StreamingEngine struct {
-	sources     map[string]*StreamSource
-	processors  map[string]*StreamProcessor
-	aggregators map[string]*StreamAggregator
-	publishers  map[string]*StreamPublisher
+func NewContentCrawler() *ContentCrawler {
+	return &ContentCrawler{
+		client: &http.Client{
+			Timeout: 15 * time.Second,
+		},
+		domainDelays: make(map[string]time.Time),
+		visited:      make(map[string]bool),
+	}
 }
 
-type StreamSource struct {
-	ID         string
-	Type       StreamSourceType
-	Config     map[string]interface{}
-	Connection StreamConnection
-	Parser     StreamParser
-	Validator  StreamValidator
-	RateLimit  *RateLimit
-	Status     StreamStatus
-	Metrics    *StreamMetrics
-	mu         sync.RWMutex
+func (c *ContentCrawler) GetQualitySeeds(query string) []SeedURL {
+	var seeds []SeedURL
+
+	normalizedQuery := strings.ToLower(strings.TrimSpace(query))
+	if normalizedQuery == "" {
+		return seeds
+	}
+
+	// Generate actual Wikipedia article URLs instead of search URLs
+	wikipediaTitle := c.generateWikipediaTitle(query)
+
+	if c.isScientificTopic(query) {
+		seeds = append(seeds, []SeedURL{
+			{URL: fmt.Sprintf("https://en.wikipedia.org/wiki/%s", wikipediaTitle), Priority: 0.9, Topic: "encyclopedia", Source: "wikipedia", Reliability: 0.85},
+			{URL: fmt.Sprintf("https://www.britannica.com/search?query=%s", url.QueryEscape(query)), Priority: 0.8, Topic: "encyclopedia", Source: "britannica", Reliability: 0.9},
+			{URL: fmt.Sprintf("https://www.nationalgeographic.com/search?q=%s", url.QueryEscape(query)), Priority: 0.75, Topic: "science", Source: "natgeo", Reliability: 0.8},
+		}...)
+	}
+
+	if c.isTechnologyTopic(query) {
+		seeds = append(seeds, []SeedURL{
+			{URL: fmt.Sprintf("https://developer.mozilla.org/en-US/search?q=%s", url.QueryEscape(query)), Priority: 0.9, Topic: "documentation", Source: "mdn", Reliability: 0.95},
+			{URL: fmt.Sprintf("https://en.wikipedia.org/wiki/%s", wikipediaTitle), Priority: 0.8, Topic: "encyclopedia", Source: "wikipedia", Reliability: 0.85},
+			{URL: fmt.Sprintf("https://stackoverflow.com/search?q=%s", url.QueryEscape(query)), Priority: 0.7, Topic: "qa", Source: "stackoverflow", Reliability: 0.75},
+		}...)
+	}
+
+	if c.isHistoricalTopic(query) {
+		seeds = append(seeds, []SeedURL{
+			{URL: fmt.Sprintf("https://en.wikipedia.org/wiki/%s", wikipediaTitle), Priority: 0.9, Topic: "encyclopedia", Source: "wikipedia", Reliability: 0.85},
+			{URL: fmt.Sprintf("https://www.britannica.com/search?query=%s", url.QueryEscape(query)), Priority: 0.85, Topic: "encyclopedia", Source: "britannica", Reliability: 0.9},
+			{URL: fmt.Sprintf("https://www.history.com/search?q=%s", url.QueryEscape(query)), Priority: 0.7, Topic: "history", Source: "history", Reliability: 0.75},
+		}...)
+	}
+
+	if c.isPoliticalOrLegalTopic(query) {
+		seeds = append(seeds, []SeedURL{
+			{URL: fmt.Sprintf("https://en.wikipedia.org/wiki/%s", wikipediaTitle), Priority: 0.9, Topic: "encyclopedia", Source: "wikipedia", Reliability: 0.85},
+			{URL: fmt.Sprintf("https://www.britannica.com/search?query=%s", url.QueryEscape(query)), Priority: 0.85, Topic: "encyclopedia", Source: "britannica", Reliability: 0.9},
+		}...)
+	}
+
+	// Always add general Wikipedia and other sources
+	seeds = append(seeds, []SeedURL{
+		{URL: fmt.Sprintf("https://en.wikipedia.org/wiki/%s", wikipediaTitle), Priority: 0.8, Topic: "general", Source: "wikipedia", Reliability: 0.85},
+		{URL: fmt.Sprintf("https://www.britannica.com/search?query=%s", url.QueryEscape(query)), Priority: 0.75, Topic: "general", Source: "britannica", Reliability: 0.9},
+	}...)
+
+	// Add fallback search URLs in case direct article URLs fail
+	seeds = append(seeds, []SeedURL{
+		{URL: fmt.Sprintf("https://en.wikipedia.org/wiki/Special:Search?search=%s", url.QueryEscape(query)), Priority: 0.6, Topic: "search", Source: "wikipedia_search", Reliability: 0.7},
+	}...)
+
+	c.sortSeedsByPriority(seeds)
+
+	if len(seeds) > 10 {
+		seeds = seeds[:10]
+	}
+
+	return seeds
 }
 
-type StreamSourceType int
+func (c *ContentCrawler) CrawlContent(seeds []SeedURL) []CrawledDocument {
+	var documents []CrawledDocument
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 
-const (
-	StreamSourceTypeRSS StreamSourceType = iota
-	StreamSourceTypeWebSocket
-	StreamSourceTypeKafka
-	StreamSourceTypeRedis
-	StreamSourceTypeEventHub
-	StreamSourceTypeKinesis
-	StreamSourceTypeWebhook
-	StreamSourceTypeDatabase
-	StreamSourceTypeFileSystem
-	StreamSourceTypeAPI
-)
+	semaphore := make(chan struct{}, 3)
 
-type StreamConnection interface {
-	Connect() error
-	Disconnect() error
-	IsConnected() bool
-	Read() ([]byte, error)
-	Write([]byte) error
-	Configure(config map[string]interface{}) error
+	for _, seed := range seeds {
+		wg.Add(1)
+		go func(s SeedURL) {
+			defer wg.Done()
+
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			doc := c.crawlSinglePage(s)
+			if doc != nil && c.isQualityContent(doc) {
+				mu.Lock()
+				documents = append(documents, *doc)
+				mu.Unlock()
+				log.Printf("Successfully crawled quality content from: %s (quality: %.2f)", s.URL, doc.Quality)
+			}
+		}(seed)
+	}
+
+	wg.Wait()
+	close(semaphore)
+
+	return documents
 }
 
-type StreamParser interface {
-	Parse([]byte) (*StreamEvent, error)
-	Validate([]byte) bool
-	Schema() *StreamSchema
+func (c *ContentCrawler) crawlSinglePage(seed SeedURL) *CrawledDocument {
+	c.respectDomainDelay(seed.URL)
+
+	c.mutex.Lock()
+	if c.visited[seed.URL] {
+		c.mutex.Unlock()
+		return nil
+	}
+	c.visited[seed.URL] = true
+	c.mutex.Unlock()
+
+	log.Printf("Crawling: %s", seed.URL)
+
+	resp, err := c.client.Get(seed.URL)
+	if err != nil {
+		log.Printf("Error fetching %s: %v", seed.URL, err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		log.Printf("Non-200 status for %s: %d", seed.URL, resp.StatusCode)
+		return nil
+	}
+
+	if !c.isValidContentType(resp.Header.Get("Content-Type")) {
+		log.Printf("Invalid content type for %s: %s", seed.URL, resp.Header.Get("Content-Type"))
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Error reading body for %s: %v", seed.URL, err)
+		return nil
+	}
+
+	html := string(body)
+
+	// Check if this is a Wikipedia search page and try to extract actual article
+	if strings.Contains(seed.URL, "wikipedia.org") && strings.Contains(seed.URL, "Special:Search") {
+		articleURL := c.extractWikipediaArticleFromSearch(html, seed.Topic)
+		if articleURL != "" {
+			log.Printf("Found actual Wikipedia article: %s", articleURL)
+			// Create a new seed for the actual article and crawl it
+			newSeed := SeedURL{
+				URL:         articleURL,
+				Priority:    seed.Priority,
+				Topic:       seed.Topic,
+				Source:      seed.Source,
+				Reliability: seed.Reliability,
+			}
+			return c.crawlSinglePage(newSeed)
+		}
+	}
+
+	content := c.extractMainContent(html)
+	if content == "" {
+		content = c.extractCleanContent(html)
+	}
+
+	if len(content) < 100 {
+		log.Printf("Content too short for %s: %d characters", seed.URL, len(content))
+		return nil
+	}
+
+	parsedURL, _ := url.Parse(seed.URL)
+	domain := ""
+	if parsedURL != nil {
+		domain = parsedURL.Host
+	}
+
+	doc := &CrawledDocument{
+		URL:         seed.URL,
+		Title:       c.extractTitle(html),
+		Content:     content,
+		Description: c.extractDescription(html),
+		Keywords:    c.extractKeywords(html),
+		Links:       c.extractLinks(html, seed.URL),
+		Language:    c.detectLanguage(content),
+		Quality:     seed.Reliability,
+		CrawledAt:   time.Now(),
+		Size:        len(content),
+		Domain:      domain,
+	}
+
+	return doc
 }
 
-type StreamValidator interface {
-	Validate(*StreamEvent) error
-	Rules() []*StreamValidationRule
+func (c *ContentCrawler) extractCleanContent(html string) string {
+	html = regexp.MustCompile(`(?i)<script[^>]*>.*?</script>`).ReplaceAllString(html, "")
+	html = regexp.MustCompile(`(?i)<style[^>]*>.*?</style>`).ReplaceAllString(html, "")
+	html = regexp.MustCompile(`(?i)<nav[^>]*>.*?</nav>`).ReplaceAllString(html, "")
+	html = regexp.MustCompile(`(?i)<header[^>]*>.*?</header>`).ReplaceAllString(html, "")
+	html = regexp.MustCompile(`(?i)<footer[^>]*>.*?</footer>`).ReplaceAllString(html, "")
+	html = regexp.MustCompile(`(?i)<aside[^>]*>.*?</aside>`).ReplaceAllString(html, "")
+	html = regexp.MustCompile(`(?i)<!--.*?-->`).ReplaceAllString(html, "")
+
+	html = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(html, " ")
+	html = regexp.MustCompile(`&[a-zA-Z0-9#]+;`).ReplaceAllString(html, " ")
+	html = regexp.MustCompile(`\s+`).ReplaceAllString(html, " ")
+
+	content := strings.TrimSpace(html)
+	content = c.removeNavigationText(content)
+
+	return content
 }
 
-type StreamValidationRule struct {
-	Field    string
-	Type     StreamValidationType
-	Value    interface{}
-	Required bool
-	Message  string
+func (c *ContentCrawler) extractMainContent(html string) string {
+	patterns := []string{
+		`(?i)<main[^>]*>(.*?)</main>`,
+		`(?i)<article[^>]*>(.*?)</article>`,
+		`(?i)<div[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</div>`,
+		`(?i)<div[^>]*id="[^"]*content[^"]*"[^>]*>(.*?)</div>`,
+		`(?i)<div[^>]*class="[^"]*main[^"]*"[^>]*>(.*?)</div>`,
+		`(?i)<div[^>]*id="[^"]*main[^"]*"[^>]*>(.*?)</div>`,
+		`(?i)<section[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</section>`,
+	}
+
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindStringSubmatch(html)
+		if len(matches) > 1 && len(strings.TrimSpace(matches[1])) > 200 {
+			content := c.extractCleanContent(matches[1])
+			if len(content) > 200 {
+				return content
+			}
+		}
+	}
+
+	return ""
 }
 
-type StreamValidationType int
-
-const (
-	StreamValidationTypeRequired StreamValidationType = iota
-	StreamValidationTypeType
-	StreamValidationTypeRange
-	StreamValidationTypePattern
-	StreamValidationTypeEnum
-	StreamValidationTypeLength
-	StreamValidationTypeFormat
-)
-
-type RateLimit struct {
-	RequestsPerSecond float64
-	BurstSize         int
-	Window            time.Duration
-	Algorithm         RateLimitAlgorithm
-	Counter           *RateLimitCounter
+func (c *ContentCrawler) extractTitle(html string) string {
+	re := regexp.MustCompile(`(?i)<title[^>]*>(.*?)</title>`)
+	matches := re.FindStringSubmatch(html)
+	if len(matches) > 1 {
+		title := strings.TrimSpace(matches[1])
+		title = regexp.MustCompile(`&[a-zA-Z0-9#]+;`).ReplaceAllString(title, " ")
+		title = regexp.MustCompile(`\s+`).ReplaceAllString(title, " ")
+		return title
+	}
+	return "Untitled"
 }
 
-type RateLimitAlgorithm int
+func (c *ContentCrawler) extractDescription(html string) string {
+	patterns := []string{
+		`(?i)<meta[^>]*name="description"[^>]*content="([^"]*)"`,
+		`(?i)<meta[^>]*content="([^"]*)"[^>]*name="description"`,
+		`(?i)<meta[^>]*property="og:description"[^>]*content="([^"]*)"`,
+	}
 
-const (
-	RateLimitAlgorithmTokenBucket RateLimitAlgorithm = iota
-	RateLimitAlgorithmLeakyBucket
-	RateLimitAlgorithmFixedWindow
-	RateLimitAlgorithmSlidingWindow
-	RateLimitAlgorithmAdaptive
-)
-
-type RateLimitCounter struct {
-	Tokens     float64
-	LastRefill time.Time
-	Requests   []time.Time
-	mu         sync.RWMutex
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindStringSubmatch(html)
+		if len(matches) > 1 && len(strings.TrimSpace(matches[1])) > 0 {
+			return strings.TrimSpace(matches[1])
+		}
+	}
+	return ""
 }
 
-type StreamStatus int
+func (c *ContentCrawler) extractKeywords(html string) []string {
+	patterns := []string{
+		`(?i)<meta[^>]*name="keywords"[^>]*content="([^"]*)"`,
+		`(?i)<meta[^>]*content="([^"]*)"[^>]*name="keywords"`,
+	}
 
-const (
-	StreamStatusIdle StreamStatus = iota
-	StreamStatusConnecting
-	StreamStatusConnected
-	StreamStatusStreaming
-	StreamStatusPaused
-	StreamStatusError
-	StreamStatusDisconnected
-)
-
-type StreamMetrics struct {
-	EventsReceived  int64
-	EventsProcessed int64
-	EventsDropped   int64
-	EventsErrored   int64
-	BytesReceived   int64
-	BytesProcessed  int64
-	ProcessingTime  time.Duration
-	ErrorRate       float64
-	Throughput      float64
-	LastUpdate      time.Time
-	mu              sync.RWMutex
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindStringSubmatch(html)
+		if len(matches) > 1 {
+			keywords := strings.Split(matches[1], ",")
+			var cleanKeywords []string
+			for _, kw := range keywords {
+				kw = strings.TrimSpace(kw)
+				if len(kw) > 0 {
+					cleanKeywords = append(cleanKeywords, kw)
+				}
+			}
+			return cleanKeywords
+		}
+	}
+	return []string{}
 }
 
-type StreamEvent struct {
-	ID           string
-	SourceID     string
-	Type         string
-	Timestamp    time.Time
-	Data         map[string]interface{}
-	Metadata     map[string]interface{}
-	Priority     int
-	TTL          time.Duration
-	Acknowledged bool
-	ProcessingID string
+func (c *ContentCrawler) extractLinks(html, baseURL string) []string {
+	var links []string
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return links
+	}
+
+	re := regexp.MustCompile(`(?i)<a[^>]*href="([^"]*)"`)
+	matches := re.FindAllStringSubmatch(html, -1)
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			href := c.resolveURL(match[1], base)
+			if href != "" && !strings.Contains(href, "#") {
+				links = append(links, href)
+			}
+		}
+	}
+
+	return links
 }
 
-type StreamSchema struct {
-	Name        string
-	Version     string
-	Fields      []*StreamField
-	Required    []string
-	Constraints []*StreamConstraint
-	Encoding    string
-	Format      string
+func (c *ContentCrawler) resolveURL(href string, base *url.URL) string {
+	u, err := url.Parse(href)
+	if err != nil {
+		return ""
+	}
+	resolved := base.ResolveReference(u)
+	if resolved.Scheme == "http" || resolved.Scheme == "https" {
+		return resolved.String()
+	}
+	return ""
 }
 
-type StreamField struct {
-	Name         string
-	Type         StreamFieldType
-	Description  string
-	Required     bool
-	DefaultValue interface{}
-	Constraints  []*StreamFieldConstraint
+func (c *ContentCrawler) detectLanguage(content string) string {
+	if len(content) < 50 {
+		return "unknown"
+	}
+
+	sampleSize := 1000
+	if len(content) < sampleSize {
+		sampleSize = len(content)
+	}
+	sample := strings.ToLower(content[:sampleSize])
+
+	englishWords := []string{"the", "and", "for", "are", "but", "not", "you", "all", "can", "had", "her", "was", "one", "our", "out", "day", "get", "has", "him", "his", "how", "its", "new", "now", "old", "see", "two", "way", "who", "boy", "did", "man", "men", "put", "say", "she", "too", "use"}
+
+	englishCount := 0
+	totalWords := len(strings.Fields(sample))
+
+	if totalWords == 0 {
+		return "unknown"
+	}
+
+	for _, word := range englishWords {
+		if strings.Contains(sample, " "+word+" ") || strings.HasPrefix(sample, word+" ") || strings.HasSuffix(sample, " "+word) {
+			englishCount++
+		}
+	}
+
+	if float64(englishCount)/float64(len(englishWords)) > 0.3 {
+		return "en"
+	}
+
+	return "unknown"
 }
 
-type StreamFieldType int
+func (c *ContentCrawler) removeNavigationText(content string) string {
+	navPatterns := []string{
+		`(?i)\b(home|about|contact|search|login|register|sign in|sign up|menu|navigation|nav|breadcrumb)\b`,
+		`(?i)\b(next|previous|prev|back|forward|more|less|expand|collapse)\b`,
+		`(?i)\b(privacy policy|terms of service|cookie policy|disclaimer)\b`,
+		`(?i)\b(follow us|social media|share|like|tweet|facebook|twitter|instagram)\b`,
+		`(?i)\b(advertisement|ads|sponsored|related articles|you might also like)\b`,
+	}
 
-const (
-	StreamFieldTypeString StreamFieldType = iota
-	StreamFieldTypeInteger
-	StreamFieldTypeFloat
-	StreamFieldTypeBoolean
-	StreamFieldTypeDateTime
-	StreamFieldTypeArray
-	StreamFieldTypeObject
-	StreamFieldTypeBinary
-)
+	lines := strings.Split(content, "\n")
+	var cleanLines []string
 
-type StreamFieldConstraint struct {
-	Type    StreamFieldConstraintType
-	Value   interface{}
-	Message string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if len(line) < 10 {
+			continue
+		}
+
+		isNav := false
+		for _, pattern := range navPatterns {
+			re := regexp.MustCompile(pattern)
+			if re.MatchString(line) {
+				isNav = true
+				break
+			}
+		}
+
+		if !isNav {
+			cleanLines = append(cleanLines, line)
+		}
+	}
+
+	return strings.Join(cleanLines, "\n")
 }
 
-type StreamFieldConstraintType int
+func (c *ContentCrawler) isQualityContent(doc *CrawledDocument) bool {
+	if doc == nil {
+		return false
+	}
 
-const (
-	StreamFieldConstraintTypeMinLength StreamFieldConstraintType = iota
-	StreamFieldConstraintTypeMaxLength
-	StreamFieldConstraintTypePattern
-	StreamFieldConstraintTypeMin
-	StreamFieldConstraintTypeMax
-	StreamFieldConstraintTypeEnum
-	StreamFieldConstraintTypeFormat
-)
+	if len(doc.Content) < 200 {
+		return false
+	}
 
-type StreamConstraint struct {
-	Type       StreamConstraintType
-	Expression string
-	Message    string
-	Severity   StreamConstraintSeverity
+	if len(doc.Title) < 5 {
+		return false
+	}
+
+	wordCount := len(strings.Fields(doc.Content))
+	if wordCount < 50 {
+		return false
+	}
+
+	avgWordLength := float64(len(doc.Content)) / float64(wordCount)
+	if avgWordLength < 3.0 || avgWordLength > 20.0 {
+		return false
+	}
+
+	if strings.Contains(strings.ToLower(doc.Content), "javascript") && strings.Contains(strings.ToLower(doc.Content), "enable") {
+		return false
+	}
+
+	spamIndicators := []string{"click here", "buy now", "limited time", "act fast", "100% free", "guarantee"}
+	contentLower := strings.ToLower(doc.Content)
+	spamCount := 0
+	for _, indicator := range spamIndicators {
+		if strings.Contains(contentLower, indicator) {
+			spamCount++
+		}
+	}
+	if spamCount >= 3 {
+		return false
+	}
+
+	return true
 }
 
-type StreamConstraintType int
+func (c *ContentCrawler) isValidContentType(contentType string) bool {
+	validTypes := []string{
+		"text/html",
+		"application/xhtml+xml",
+		"text/plain",
+	}
 
-const (
-	StreamConstraintTypeExpression StreamConstraintType = iota
-	StreamConstraintTypeUnique
-	StreamConstraintTypeDependency
-	StreamConstraintTypeConditional
-)
+	for _, validType := range validTypes {
+		if strings.Contains(contentType, validType) {
+			return true
+		}
+	}
 
-type StreamConstraintSeverity int
-
-const (
-	StreamConstraintSeverityInfo StreamConstraintSeverity = iota
-	StreamConstraintSeverityWarning
-	StreamConstraintSeverityError
-	StreamConstraintSeverityCritical
-)
-
-type StreamProcessor struct {
-	ID           string
-	Name         string
-	Type         StreamProcessorType
-	Config       map[string]interface{}
-	Pipeline     []*ProcessingStage
-	Filter       StreamFilter
-	Transformer  StreamTransformer
-	Enricher     StreamEnricher
-	Buffer       *StreamBuffer
-	ErrorHandler StreamErrorHandler
-	Metrics      *ProcessorMetrics
-	Status       ProcessorStatus
-	mu           sync.RWMutex
+	return false
 }
 
-type StreamProcessorType int
+func (c *ContentCrawler) respectDomainDelay(urlStr string) {
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return
+	}
 
-const (
-	StreamProcessorTypeFilter StreamProcessorType = iota
-	StreamProcessorTypeTransform
-	StreamProcessorTypeEnrich
-	StreamProcessorTypeAggregate
-	StreamProcessorTypeRoute
-	StreamProcessorTypeValidate
-	StreamProcessorTypeStore
-	StreamProcessorTypeNotify
-)
+	domain := parsedURL.Host
 
-type ProcessingStage struct {
-	ID          string
-	Name        string
-	Type        ProcessingStageType
-	Processor   StageProcessor
-	Config      map[string]interface{}
-	ErrorPolicy ErrorPolicy
-	Timeout     time.Duration
-	Retries     int
-	Order       int
-	Enabled     bool
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if lastAccess, exists := c.domainDelays[domain]; exists {
+		elapsed := time.Since(lastAccess)
+		if elapsed < time.Second {
+			time.Sleep(time.Second - elapsed)
+		}
+	}
+
+	c.domainDelays[domain] = time.Now()
 }
 
-type ProcessingStageType int
-
-const (
-	ProcessingStageTypeFilter ProcessingStageType = iota
-	ProcessingStageTypeMap
-	ProcessingStageTypeReduce
-	ProcessingStageTypeValidate
-	ProcessingStageTypeEnrich
-	ProcessingStageTypeRoute
-	ProcessingStageTypeStore
-	ProcessingStageTypeNotify
-)
-
-type StageProcessor interface {
-	Process(*StreamEvent) (*StreamEvent, error)
-	Configure(config map[string]interface{}) error
-	Name() string
-	Type() ProcessingStageType
+func (c *ContentCrawler) sortSeedsByPriority(seeds []SeedURL) {
+	sort.Slice(seeds, func(i, j int) bool {
+		return seeds[i].Priority > seeds[j].Priority
+	})
 }
 
-type ErrorPolicy int
-
-const (
-	ErrorPolicyFail ErrorPolicy = iota
-	ErrorPolicySkip
-	ErrorPolicyRetry
-	ErrorPolicyDeadLetter
-	ErrorPolicyLog
-)
-
-type StreamFilter interface {
-	Filter(*StreamEvent) bool
-	Criteria() []*FilterCriterion
-	Configure(config map[string]interface{}) error
+func (c *ContentCrawler) isScientificTopic(query string) bool {
+	scientificTerms := []string{"biology", "chemistry", "physics", "mathematics", "astronomy", "geology", "ecology", "genetics", "evolution", "molecule", "atom", "quantum", "theory", "hypothesis", "experiment", "research", "study", "analysis", "data", "scientific"}
+	queryLower := strings.ToLower(query)
+	for _, term := range scientificTerms {
+		if strings.Contains(queryLower, term) {
+			return true
+		}
+	}
+	return false
 }
 
-type FilterCriterion struct {
-	Field         string
-	Operator      FilterOperator
-	Value         interface{}
-	CaseSensitive bool
-	Negated       bool
+func (c *ContentCrawler) isTechnologyTopic(query string) bool {
+	techTerms := []string{"programming", "software", "computer", "algorithm", "code", "development", "web", "app", "database", "network", "security", "javascript", "python", "java", "html", "css", "framework", "library", "api", "technology", "digital", "internet"}
+	queryLower := strings.ToLower(query)
+	for _, term := range techTerms {
+		if strings.Contains(queryLower, term) {
+			return true
+		}
+	}
+	return false
 }
 
-type FilterOperator int
-
-const (
-	FilterOperatorEquals FilterOperator = iota
-	FilterOperatorNotEquals
-	FilterOperatorGreaterThan
-	FilterOperatorLessThan
-	FilterOperatorGreaterOrEqual
-	FilterOperatorLessOrEqual
-	FilterOperatorContains
-	FilterOperatorStartsWith
-	FilterOperatorEndsWith
-	FilterOperatorMatches
-	FilterOperatorIn
-	FilterOperatorNotIn
-	FilterOperatorExists
-	FilterOperatorNotExists
-)
-
-type StreamTransformer interface {
-	Transform(*StreamEvent) (*StreamEvent, error)
-	Rules() []*TransformationRule
-	Configure(config map[string]interface{}) error
+func (c *ContentCrawler) isHistoricalTopic(query string) bool {
+	historicalTerms := []string{"history", "historical", "ancient", "medieval", "renaissance", "war", "empire", "civilization", "dynasty", "revolution", "century", "period", "era", "timeline", "archaeological", "artifact", "culture", "tradition", "heritage"}
+	queryLower := strings.ToLower(query)
+	for _, term := range historicalTerms {
+		if strings.Contains(queryLower, term) {
+			return true
+		}
+	}
+	return false
 }
 
-type TransformationRule struct {
-	ID         string
-	Name       string
-	Type       TransformationType
-	Source     string
-	Target     string
-	Expression string
-	Function   TransformationFunction
-	Condition  string
-	Priority   int
-	Enabled    bool
+func (c *ContentCrawler) isPoliticalOrLegalTopic(query string) bool {
+	politicalTerms := []string{"politics", "government", "law", "legal", "constitution", "democracy", "election", "vote", "policy", "legislation", "parliament", "congress", "court", "justice", "rights", "freedom", "liberty", "citizenship", "sovereignty"}
+	queryLower := strings.ToLower(query)
+	for _, term := range politicalTerms {
+		if strings.Contains(queryLower, term) {
+			return true
+		}
+	}
+	return false
 }
 
-type TransformationType int
+func (c *ContentCrawler) generateWikipediaTitle(query string) string {
+	// Clean and format the query for Wikipedia article URLs
+	title := strings.TrimSpace(query)
 
-const (
-	TransformationTypeRename TransformationType = iota
-	TransformationTypeMap
-	TransformationTypeCompute
-	TransformationTypeAggregate
-	TransformationTypeSplit
-	TransformationTypeMerge
-	TransformationTypeFormat
-	TransformationTypeConvert
-)
+	// Convert to title case for better Wikipedia matching
+	words := strings.Fields(title)
+	for i, word := range words {
+		if len(word) > 0 {
+			// Don't capitalize small words unless they're the first word
+			if i == 0 || !isSmallWord(word) {
+				words[i] = strings.Title(strings.ToLower(word))
+			} else {
+				words[i] = strings.ToLower(word)
+			}
+		}
+	}
 
-type TransformationFunction func(interface{}) (interface{}, error)
+	// Join with underscores (Wikipedia format)
+	result := strings.Join(words, "_")
 
-type StreamEnricher interface {
-	Enrich(*StreamEvent) (*StreamEvent, error)
-	Sources() []*EnrichmentSource
-	Configure(config map[string]interface{}) error
+	// URL encode only special characters, but keep underscores
+	result = strings.ReplaceAll(result, " ", "_")
+
+	return result
 }
 
-type EnrichmentSource struct {
-	ID         string
-	Name       string
-	Type       EnrichmentSourceType
-	Connection EnrichmentConnection
-	Query      EnrichmentQuery
-	Cache      *EnrichmentCache
-	Timeout    time.Duration
-	Retries    int
-	Enabled    bool
+func isSmallWord(word string) bool {
+	smallWords := map[string]bool{
+		"a": true, "an": true, "and": true, "as": true, "at": true, "but": true,
+		"by": true, "for": true, "if": true, "in": true, "of": true, "on": true,
+		"or": true, "the": true, "to": true, "up": true, "via": true, "is": true,
+	}
+	return smallWords[strings.ToLower(word)]
 }
 
-type EnrichmentSourceType int
+func (c *ContentCrawler) extractWikipediaArticleFromSearch(html, originalQuery string) string {
+	// Extract actual Wikipedia article URL from search results
+	re := regexp.MustCompile(`<a[^>]*href="(/wiki/[^"#]*)"[^>]*title="([^"]*)"`)
+	matches := re.FindAllStringSubmatch(html, -1)
 
-const (
-	EnrichmentSourceTypeDatabase EnrichmentSourceType = iota
-	EnrichmentSourceTypeAPI
-	EnrichmentSourceTypeCache
-	EnrichmentSourceTypeFile
-	EnrichmentSourceTypeIndex
-	EnrichmentSourceTypeStream
-)
+	queryLower := strings.ToLower(originalQuery)
 
-type EnrichmentConnection interface {
-	Connect() error
-	Query(EnrichmentQuery) (map[string]interface{}, error)
-	Disconnect() error
-	IsConnected() bool
+	for _, match := range matches {
+		if len(match) >= 3 {
+			href := match[1]
+			title := strings.ToLower(match[2])
+
+			// Skip meta pages and disambiguation
+			if strings.Contains(href, ":") || strings.Contains(title, "disambiguation") {
+				continue
+			}
+
+			// Check if this article title relates to our query
+			if c.isRelevantWikipediaResult(title, queryLower) {
+				return "https://en.wikipedia.org" + href
+			}
+		}
+	}
+
+	return ""
 }
 
-type EnrichmentQuery struct {
-	Statement  string
-	Parameters map[string]interface{}
-	Fields     []string
-	Timeout    time.Duration
-	CacheKey   string
-	CacheTTL   time.Duration
-}
+func (c *ContentCrawler) isRelevantWikipediaResult(title, query string) bool {
+	// Simple relevance check
+	queryWords := strings.Fields(query)
+	titleWords := strings.Fields(title)
 
-type EnrichmentCache struct {
-	Storage        CacheStorage
-	TTL            time.Duration
-	MaxSize        int
-	EvictionPolicy EvictionPolicy
-	Statistics     *CacheStatistics
-	mu             sync.RWMutex
-}
+	matches := 0
+	for _, qWord := range queryWords {
+		if len(qWord) < 3 { // Skip short words
+			continue
+		}
+		for _, tWord := range titleWords {
+			if strings.Contains(tWord, qWord) || strings.Contains(qWord, tWord) {
+				matches++
+				break
+			}
+		}
+	}
 
-type CacheStorage interface {
-	Get(string) (interface{}, bool)
-	Set(string, interface{}, time.Duration) error
-	Delete(string) error
-	Clear() error
-	Size() int
-}
-
-type CacheStatistics struct {
-	Hits       int64
-	Misses     int64
-	Sets       int64
-	Deletes    int64
-	Evictions  int64
-	Size       int64
-	HitRate    float64
-	LastUpdate time.Time
-}
-
-type StreamBuffer struct {
-	Type          BufferType
-	Capacity      int
-	FlushInterval time.Duration
-	FlushSize     int
-	Events        []*StreamEvent
-	Metrics       *BufferMetrics
-	mu            sync.RWMutex
-}
-
-type BufferType int
-
-const (
-	BufferTypeMemory BufferType = iota
-	BufferTypeDisk
-	BufferTypeHybrid
-	BufferTypeDistributed
-)
-
-type BufferMetrics struct {
-	EventsBuffered    int64
-	EventsFlushed     int64
-	EventsDropped     int64
-	BufferUtilization float64
-	FlushDuration     time.Duration
-	LastFlush         time.Time
-}
-
-type StreamErrorHandler interface {
-	Handle(*StreamEvent, error) error
-	Policy() ErrorPolicy
-	Configure(config map[string]interface{}) error
-}
-
-type ProcessorMetrics struct {
-	EventsProcessed   int64
-	EventsFiltered    int64
-	EventsTransformed int64
-	EventsEnriched    int64
-	EventsErrored     int64
-	ProcessingTime    time.Duration
-	ErrorRate         float64
-	Throughput        float64
-	LastUpdate        time.Time
-}
-
-type ProcessorStatus int
-
-const (
-	ProcessorStatusIdle ProcessorStatus = iota
-	ProcessorStatusRunning
-	ProcessorStatusPaused
-	ProcessorStatusError
-	ProcessorStatusStopped
-)
-
-type StreamAggregator struct {
-	ID        string
-	Name      string
-	Type      AggregatorType
-	Config    map[string]interface{}
-	Windows   []*AggregationWindow
-	Functions map[string]AggregationFunction
-	Triggers  []*AggregationTrigger
-	Output    AggregationOutput
-	State     *AggregatorState
-	Metrics   *AggregatorMetrics
-	mu        sync.RWMutex
-}
-
-type AggregatorType int
-
-const (
-	AggregatorTypeTumbling AggregatorType = iota
-	AggregatorTypeSliding
-	AggregatorTypeSession
-	AggregatorTypeGlobal
-	AggregatorTypeCustom
-)
-
-type AggregationWindow struct {
-	ID        string
-	Type      WindowType
-	Size      time.Duration
-	Slide     time.Duration
-	Grace     time.Duration
-	Watermark time.Duration
-	KeyBy     []string
-	Partition WindowPartition
-	State     *WindowState
-}
-
-type WindowType int
-
-const (
-	WindowTypeTumbling WindowType = iota
-	WindowTypeSliding
-	WindowTypeSession
-	WindowTypeCount
-	WindowTypeGlobal
-)
-
-type WindowPartition interface {
-	Partition(*StreamEvent) string
-	Partitions() []string
-}
-
-type WindowState struct {
-	Events     []*StreamEvent
-	Aggregates map[string]interface{}
-	StartTime  time.Time
-	EndTime    time.Time
-	LastUpdate time.Time
-	EventCount int64
-	Size       int64
-}
-
-type AggregationFunction interface {
-	Initialize() interface{}
-	Update(interface{}, *StreamEvent) interface{}
-	Merge(interface{}, interface{}) interface{}
-	Result(interface{}) interface{}
-	Name() string
-}
-
-type AggregationTrigger struct {
-	ID            string
-	Type          TriggerType
-	Condition     TriggerCondition
-	Action        TriggerAction
-	Enabled       bool
-	LastTriggered time.Time
-}
-
-type TriggerType int
-
-const (
-	TriggerTypeTime TriggerType = iota
-	TriggerTypeCount
-	TriggerTypeSize
-	TriggerTypeWatermark
-	TriggerTypeCondition
-	TriggerTypeEvent
-)
-
-type TriggerCondition interface {
-	Evaluate(*WindowState) bool
-	Reset()
-}
-
-type TriggerAction interface {
-	Execute(*WindowState) error
-	Name() string
-}
-
-type AggregationOutput interface {
-	Emit(*AggregationResult) error
-	Configure(config map[string]interface{}) error
-}
-
-type AggregationResult struct {
-	WindowID   string
-	Key        string
-	Aggregates map[string]interface{}
-	EventCount int64
-	StartTime  time.Time
-	EndTime    time.Time
-	Timestamp  time.Time
-	Metadata   map[string]interface{}
-}
-
-type AggregatorState struct {
-	Windows        map[string]*WindowState
-	Watermark      time.Time
-	LastCheckpoint time.Time
-	Checkpoints    []*StateCheckpoint
-	mu             sync.RWMutex
-}
-
-type StateCheckpoint struct {
-	ID         string
-	Timestamp  time.Time
-	State      map[string]interface{}
-	Size       int64
-	Compressed bool
-}
-
-type AggregatorMetrics struct {
-	WindowsCreated    int64
-	WindowsClosed     int64
-	EventsAggregated  int64
-	AggregatesEmitted int64
-	StateSize         int64
-	Watermark         time.Time
-	LastUpdate        time.Time
-}
-
-type StreamPublisher struct {
-	ID           string
-	Name         string
-	Type         PublisherType
-	Config       map[string]interface{}
-	Destinations []*PublishDestination
-	Router       PublishRouter
-	Formatter    PublishFormatter
-	Compressor   PublishCompressor
-	Encryptor    PublishEncryptor
-	Buffer       *PublishBuffer
-	Metrics      *PublisherMetrics
-	Status       PublisherStatus
-	mu           sync.RWMutex
-}
-
-type PublisherType int
-
-const (
-	PublisherTypeHTTP PublisherType = iota
-	PublisherTypeWebSocket
-	PublisherTypeKafka
-	PublisherTypeRedis
-	PublisherTypeEventHub
-	PublisherTypeKinesis
-	PublisherTypeEmail
-	PublisherTypeSMS
-	PublisherTypeSlack
-	PublisherTypeWebhook
-)
-
-type PublishDestination struct {
-	ID             string
-	Name           string
-	Type           DestinationType
-	Endpoint       string
-	Config         map[string]interface{}
-	Headers        map[string]string
-	Authentication *PublishAuthentication
-	RateLimit      *RateLimit
-	CircuitBreaker *CircuitBreaker
-	Retry          *RetryPolicy
-	Enabled        bool
-}
-
-type DestinationType int
-
-const (
-	DestinationTypeEndpoint DestinationType = iota
-	DestinationTypeTopic
-	DestinationTypeQueue
-	DestinationTypeStream
-	DestinationTypeFile
-	DestinationTypeDatabase
-)
-
-type PublishAuthentication struct {
-	Type        AuthenticationType
-	Username    string
-	Password    string
-	Token       string
-	Key         string
-	Certificate string
-	OAuth       *OAuthConfig
-}
-
-type AuthenticationType int
-
-const (
-	AuthenticationTypeNone AuthenticationType = iota
-	AuthenticationTypeBasic
-	AuthenticationTypeBearer
-	AuthenticationTypeAPIKey
-	AuthenticationTypeOAuth
-	AuthenticationTypeCertificate
-	AuthenticationTypeCustom
-)
-
-type OAuthConfig struct {
-	ClientID     string
-	ClientSecret string
-	TokenURL     string
-	Scope        []string
-	GrantType    string
-}
-
-type CircuitBreaker struct {
-	State            CircuitBreakerState
-	FailureThreshold int
-	RecoveryTimeout  time.Duration
-	SuccessThreshold int
-	FailureCount     int
-	SuccessCount     int
-	LastFailure      time.Time
-	LastRecovery     time.Time
-	mu               sync.RWMutex
-}
-
-type CircuitBreakerState int
-
-const (
-	CircuitBreakerStateClosed CircuitBreakerState = iota
-	CircuitBreakerStateOpen
-	CircuitBreakerStateHalfOpen
-)
-
-type RetryPolicy struct {
-	MaxRetries int
-	BaseDelay  time.Duration
-	MaxDelay   time.Duration
-	Multiplier float64
-	Jitter     bool
-	RetryOn    []RetryCondition
-}
-
-type RetryCondition interface {
-	ShouldRetry(error) bool
-}
-
-type PublishRouter interface {
-	Route(*StreamEvent) []*PublishDestination
-	Configure(config map[string]interface{}) error
-}
-
-type PublishFormatter interface {
-	Format(*StreamEvent) ([]byte, error)
-	ContentType() string
-	Configure(config map[string]interface{}) error
-}
-
-type PublishCompressor interface {
-	Compress([]byte) ([]byte, error)
-	Decompress([]byte) ([]byte, error)
-	Algorithm() string
-}
-
-type PublishEncryptor interface {
-	Encrypt([]byte) ([]byte, error)
-	Decrypt([]byte) ([]byte, error)
-	Algorithm() string
-}
-
-type PublishBuffer struct {
-	Type          PublishBufferType
-	Capacity      int
-	FlushInterval time.Duration
-	FlushSize     int
-	Events        []*PublishEvent
-	Metrics       *PublishBufferMetrics
-	mu            sync.RWMutex
-}
-
-type PublishBufferType int
-
-const (
-	PublishBufferTypeMemory PublishBufferType = iota
-	PublishBufferTypeDisk
-	PublishBufferTypeHybrid
-)
-
-type PublishEvent struct {
-	Event       *StreamEvent
-	Destination *PublishDestination
-	Data        []byte
-	Attempts    int
-	LastAttempt time.Time
-	NextAttempt time.Time
-	Status      PublishEventStatus
-}
-
-type PublishEventStatus int
-
-const (
-	PublishEventStatusPending PublishEventStatus = iota
-	PublishEventStatusSending
-	PublishEventStatusSent
-	PublishEventStatusFailed
-	PublishEventStatusExpired
-)
-
-type PublishBufferMetrics struct {
-	EventsBuffered    int64
-	EventsSent        int64
-	EventsFailed      int64
-	EventsExpired     int64
-	BufferUtilization float64
-	SendDuration      time.Duration
-	LastSend          time.Time
-}
-
-type PublisherMetrics struct {
-	EventsPublished int64
-	EventsFailed    int64
-	EventsRetried   int64
-	PublishDuration time.Duration
-	ErrorRate       float64
-	Throughput      float64
-	LastUpdate      time.Time
-}
-
-type PublisherStatus int
-
-const (
-	PublisherStatusIdle PublisherStatus = iota
-	PublisherStatusRunning
-	PublisherStatusPaused
-	PublisherStatusError
-	PublisherStatusStopped
-)
-
-type EvictionPolicy int
-
-func NewCrawler() *Crawler {
-	return &Crawler{}
+	// Consider relevant if at least half the meaningful words match
+	return matches >= len(queryWords)/2 && matches > 0
 }

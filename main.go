@@ -19,7 +19,7 @@ func main() {
 			fmt.Println("URL required for crawling mode")
 			os.Exit(1)
 		}
-		crawler := NewCrawler()
+		crawler := NewContentCrawler()
 		_ = crawler
 	case "index":
 		indexer := NewIndexer()
