@@ -137,18 +137,15 @@ function App() {
         const isResultsInfo = mode === 'results' && row === 0 && col === (GRID_COLS - 1);
         const isResultArea = mode === 'results' && row >= (GRID_ROWS === 7 ? 5 : 4) && col >= (GRID_COLS === 6 ? 0 : 1) && col <= (GRID_COLS === 6 ? 5 : 6);
         
-        // Color based on row position - lighter at top, darker at bottom
         const rowProgress = row / (GRID_ROWS - 1);
         const getRowColor = (progress: number) => {
           const lightBlues = ['#d6e8fa', '#d6e8fa', '#c7e0fa', '#b8d6f5', '#b3d0f7'];
           const darkBlues = ['#a5c6ef', '#8fb3e8', '#7ba3dc', '#6b9bd2', '#5a8bc8'];
           
           if (progress <= 0.5) {
-            // Top half - use light blues
             const index = Math.floor(progress * 2 * lightBlues.length);
             return lightBlues[Math.min(index, lightBlues.length - 1)];
           } else {
-            // Bottom half - use dark blues
             const index = Math.floor((progress - 0.5) * 2 * darkBlues.length);
             return darkBlues[Math.min(index, darkBlues.length - 1)];
           }
@@ -344,9 +341,6 @@ function App() {
         
         const bottomUpDelay = (GRID_ROWS - 1 - row) * 80 + col * 20;
         
-        const shouldFloat = !content && !loading && showContent && Math.random() > 0.7;
-        const floatDelay = Math.random() * 2;
-        
         grid.push(
           <div
             key={`${row}-${col}`}
@@ -358,15 +352,16 @@ function App() {
               width,
               height,
               background: content ? (isSearch ? '#b3d0f7' : (isTitle ? '#d6e8fa' : rowColor)) : rowColor,
-              borderRadius: 18,
+              borderRadius: 0,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              boxShadow: content ? '0 2px 12px 0 rgba(41,119,245,0.07)' : '0 2px 12px 0 rgba(41,119,245,0.07)',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+              filter: content ? 'none' : 'blur(1px)',
               transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
               cursor: (content && (isTitle || isSearch)) || (content && isResultArea) ? 'pointer' : 'default',
-              opacity: showContent ? 1 : 0,
-              animation: showContent ? `fadeInScale 0.5s cubic-bezier(0.4, 0, 0.2, 1) ${(row * 0.08 + col * 0.03)}s both${shouldFloat ? `, gentleFloat 4s ease-in-out infinite ${floatDelay}s` : ''}` : undefined
+              opacity: showContent ? (content ? 1 : 0.7) : 0,
+              animation: showContent ? `fadeInScale 0.5s cubic-bezier(0.4, 0, 0.2, 1) ${(row * 0.08 + col * 0.03)}s both` : undefined
             }}
             onMouseEnter={(e) => {
               if (content && !loading) {
