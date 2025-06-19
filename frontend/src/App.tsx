@@ -742,20 +742,20 @@ function App() {
             border: 'none'
           }}>
             <div style={{
-              color: '#DC143C',
+              color: '#6C63FF',
               fontSize: '24px',
               fontWeight: 800,
               fontFamily: 'Trebuchet MS, monospace',
               marginBottom: '8px',
-              textShadow: '2px 2px 0px rgba(220,20,60,0.2)'
+              textShadow: '2px 2px 0px rgba(108,99,255,0.2)'
             }}>
               NO RESULTS FOUND
             </div>
             <div style={{
-              color: '#444',
-              fontSize: '14px',
-              fontFamily: 'monospace',
-              fontWeight: 600,
+              color: '#666',
+              fontSize: '16px',
+              fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+              fontWeight: 500,
               marginBottom: '16px'
             }}>
               The sloth bear couldn't find anything. Try different keywords!

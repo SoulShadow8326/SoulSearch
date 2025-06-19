@@ -1,12 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -37,10 +36,15 @@ func NewServer(port int) *Server {
 
 	engine := NewSearchEngine()
 
-	return &Server{
+	// Pre-index some high-quality content for common queries
+	server := &Server{
 		port:   port,
 		engine: engine,
 	}
+
+	go server.preIndexCommonQueries()
+
+	return server
 }
 
 func (s *Server) spaHandler(fs http.Handler) http.HandlerFunc {
@@ -146,12 +150,67 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Starting real-time crawling and indexing for query: '%s'", query)
+	log.Printf("Starting search for query: '%s'", query)
 	startTime := time.Now()
 
-	crawler := NewContentCrawler()
-	seeds := crawler.GetQualitySeeds(query)
-	crawledDocs := crawler.CrawlContent(seeds)
+	// First, check if we already have good results in the existing index
+	existingResults, total, timeTaken := s.engine.SearchPaginated(query, 1, 10)
+
+	// If we have authoritative results, return them immediately
+	if s.hasAuthoritativeResults(existingResults) {
+		log.Printf("Found authoritative results in existing index, returning immediately")
+
+		for i := range existingResults {
+			if existingResults[i].Snippet == "" {
+				existingResults[i].Snippet = s.generateSimpleSnippet(existingResults[i].URL, query)
+			}
+		}
+
+		response := SearchResponse{
+			Results:    existingResults,
+			Total:      total,
+			Page:       1,
+			TotalPages: (total + 9) / 10,
+			TimeTaken:  timeTaken,
+		}
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	log.Printf("No authoritative results found, starting real-time crawling for query: '%s'", query)
+
+	// Add timeout handling
+	timeout := 25 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	done := make(chan struct{})
+	var crawledDocs []CrawledDocument
+
+	go func() {
+		defer close(done)
+		crawler := NewContentCrawler()
+		seeds := crawler.GetQualitySeeds(query)
+		log.Printf("Generated %d seeds for crawling", len(seeds))
+		crawledDocs = crawler.CrawlContent(seeds)
+		log.Printf("Crawled %d documents", len(crawledDocs))
+	}()
+
+	select {
+	case <-done:
+		// Crawling completed successfully
+	case <-ctx.Done():
+		log.Printf("Crawling timed out after %v", timeout)
+		response := SearchResponse{
+			Results:    []SearchResult{},
+			Total:      0,
+			Page:       1,
+			TotalPages: 0,
+			TimeTaken:  time.Since(startTime).String(),
+		}
+		json.NewEncoder(w).Encode(response)
+		return
+	}
 
 	log.Printf("Crawled %d documents", len(crawledDocs))
 
@@ -201,54 +260,6 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(response)
-}
-
-func (s *Server) crawlPages(urls []string) []Page {
-	var pages []Page
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
-	for _, rawURL := range urls {
-		log.Printf("Crawling URL: %s", rawURL)
-
-		resp, err := client.Get(rawURL)
-		if err != nil {
-			log.Printf("Error crawling %s: %v", rawURL, err)
-			continue
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			log.Printf("Non-200 status for %s: %d", rawURL, resp.StatusCode)
-			continue
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			log.Printf("Error reading body for %s: %v", rawURL, err)
-			continue
-		}
-
-		content := string(body)
-		title := extractTitle(content)
-		cleanContent := extractContent(content)
-
-		if len(cleanContent) > 50 {
-			page := Page{
-				URL:     rawURL,
-				Title:   title,
-				Content: cleanContent,
-				Crawled: time.Now(),
-			}
-			pages = append(pages, page)
-			log.Printf("Successfully crawled: %s (title: %s, content length: %d)", rawURL, title, len(cleanContent))
-		}
-
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	return pages
 }
 
 func (s *Server) indexPages(pages []Page) *InvertedIndex {
@@ -528,76 +539,6 @@ func loadStopWords() map[string]bool {
 	return stopWords
 }
 
-func generateSearchURLs(query string) []string {
-	var urls []string
-
-	// Direct Wikipedia pages - try multiple variations
-	queryWords := strings.Fields(query)
-	if len(queryWords) == 1 {
-		// Single word - try direct Wikipedia page
-		directWiki := "https://en.wikipedia.org/wiki/" + strings.Title(queryWords[0])
-		urls = append(urls, directWiki)
-	} else if len(queryWords) <= 3 {
-		// Multiple words - try with underscores (Wikipedia format)
-		wikiTitle := strings.Join(queryWords, "_")
-		directWiki := "https://en.wikipedia.org/wiki/" + wikiTitle
-		urls = append(urls, directWiki)
-	}
-
-	// For animals, add specific animal info sources
-	animalTerms := []string{"dog", "cat", "bird", "fish", "animal", "pet", "mammal", "species"}
-	queryLower := strings.ToLower(query)
-	for _, term := range animalTerms {
-		if strings.Contains(queryLower, term) {
-			urls = append(urls, "https://www.nationalgeographic.com/animals/mammals/"+strings.ToLower(queryWords[0]))
-			urls = append(urls, "https://en.wikipedia.org/wiki/"+strings.Title(queryWords[0]))
-			break
-		}
-	}
-
-	// For science topics
-	scienceTerms := []string{"science", "biology", "chemistry", "physics", "research", "study"}
-	for _, term := range scienceTerms {
-		if strings.Contains(queryLower, term) {
-			urls = append(urls, "https://en.wikipedia.org/wiki/"+strings.Title(query))
-			urls = append(urls, "https://www.britannica.com/science/"+strings.ToLower(strings.ReplaceAll(query, " ", "-")))
-			break
-		}
-	}
-
-	// For technology topics
-	techTerms := []string{"programming", "code", "javascript", "python", "go", "react", "node", "api", "github", "git", "docker", "computer", "software", "web", "internet"}
-	for _, term := range techTerms {
-		if strings.Contains(queryLower, term) {
-			urls = append(urls, "https://en.wikipedia.org/wiki/"+strings.Title(query))
-			urls = append(urls, "https://developer.mozilla.org/en-US/docs/Web/"+strings.Title(queryWords[0]))
-			break
-		}
-	}
-
-	// For history topics
-	historyTerms := []string{"history", "war", "ancient", "civilization", "empire", "king", "queen", "battle"}
-	for _, term := range historyTerms {
-		if strings.Contains(queryLower, term) {
-			urls = append(urls, "https://en.wikipedia.org/wiki/"+strings.Title(query))
-			urls = append(urls, "https://www.britannica.com/topic/"+strings.ToLower(strings.ReplaceAll(query, " ", "-")))
-			break
-		}
-	}
-
-	// General fallback - always include Wikipedia
-	if len(urls) == 0 {
-		urls = append(urls, "https://en.wikipedia.org/wiki/"+strings.Title(strings.ReplaceAll(query, " ", "_")))
-	}
-
-	// Add alternative Wikipedia search if no direct pages
-	if len(urls) < 3 {
-		urls = append(urls, "https://en.wikipedia.org/wiki/Special:Search?search="+url.QueryEscape(query))
-	}
-
-	return urls
-}
-
 func (s *Server) generateSimpleSnippet(url, query string) string {
 	s.engine.mu.RLock()
 	defer s.engine.mu.RUnlock()
@@ -666,4 +607,127 @@ func (s *Server) generateSimpleSnippet(url, query string) string {
 	}
 
 	return bestSentence
+}
+
+func (s *Server) preIndexCommonQueries() {
+	log.Printf("Starting pre-indexing of common queries...")
+
+	// Common topics that benefit from authoritative sources
+	commonTopics := []struct {
+		topic string
+		urls  []string
+	}{
+		{
+			topic: "duck",
+			urls: []string{
+				"https://en.wikipedia.org/wiki/Duck",
+				"https://simple.wikipedia.org/wiki/Duck",
+			},
+		},
+		{
+			topic: "frog",
+			urls: []string{
+				"https://en.wikipedia.org/wiki/Frog",
+				"https://simple.wikipedia.org/wiki/Frog",
+			},
+		},
+		{
+			topic: "cat",
+			urls: []string{
+				"https://en.wikipedia.org/wiki/Cat",
+				"https://simple.wikipedia.org/wiki/Cat",
+			},
+		},
+		{
+			topic: "dog",
+			urls: []string{
+				"https://en.wikipedia.org/wiki/Dog",
+				"https://simple.wikipedia.org/wiki/Dog",
+			},
+		},
+		{
+			topic: "hackclub",
+			urls: []string{
+				"https://hackclub.com",
+				"https://en.wikipedia.org/wiki/Hack_Club",
+			},
+		},
+		{
+			topic: "python",
+			urls: []string{
+				"https://en.wikipedia.org/wiki/Python_(programming_language)",
+				"https://docs.python.org/3/",
+			},
+		},
+	}
+
+	crawler := NewContentCrawler()
+	var allDocs []CrawledDocument
+
+	for _, topic := range commonTopics {
+		log.Printf("Pre-indexing topic: %s", topic.topic)
+
+		var seeds []SeedURL
+		for _, url := range topic.urls {
+			seeds = append(seeds, SeedURL{
+				URL:         url,
+				Priority:    0.9,
+				Topic:       topic.topic,
+				Source:      "preindex",
+				Reliability: 0.95,
+			})
+		}
+
+		docs := crawler.CrawlContent(seeds)
+		allDocs = append(allDocs, docs...)
+		log.Printf("Pre-indexed %d documents for topic: %s", len(docs), topic.topic)
+	}
+
+	if len(allDocs) > 0 {
+		var pages []Page
+		for _, doc := range allDocs {
+			page := Page{
+				URL:     doc.URL,
+				Title:   doc.Title,
+				Content: doc.Content,
+				Crawled: doc.CrawledAt,
+			}
+			pages = append(pages, page)
+		}
+
+		index := s.indexPages(pages)
+		s.engine.LoadIndex(index)
+		log.Printf("Pre-indexing completed. Loaded %d documents into search index", len(pages))
+	}
+}
+
+func (s *Server) hasAuthoritativeResults(results []SearchResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+
+	// Check if the top result is from an authoritative source
+	authoritativeDomains := []string{
+		"wikipedia.org",
+		"hackclub.com",
+		"hackclub.org",
+		"docs.python.org",
+		"github.com",
+		"stackoverflow.com",
+		"britannica.com",
+		"nationalgeographic.com",
+		"smithsonianmag.com",
+	}
+
+	topResult := results[0]
+	for _, domain := range authoritativeDomains {
+		if strings.Contains(strings.ToLower(topResult.URL), domain) {
+			// Also check if the score is reasonably high
+			if topResult.Score > 15.0 {
+				return true
+			}
+		}
+	}
+
+	return false
 }

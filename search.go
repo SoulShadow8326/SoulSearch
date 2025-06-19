@@ -257,37 +257,6 @@ func (se *SearchEngine) Search(query string, limit int) ([]SearchResult, string)
 	return results, elapsed.String()
 }
 
-func (se *SearchEngine) logQuery(query, userAgent, ip string) {
-	se.mu.Lock()
-	defer se.mu.Unlock()
-
-	// Log for analytics
-	entry := QueryLogEntry{
-		Query:     query,
-		Timestamp: time.Now(),
-		UserAgent: userAgent,
-		IP:        ip,
-	}
-
-	se.queryLog = append(se.queryLog, entry)
-
-	// Keep only last 10000 queries
-	if len(se.queryLog) > 10000 {
-		se.queryLog = se.queryLog[1:]
-	}
-
-	// Update popular terms
-	terms := strings.Fields(strings.ToLower(query))
-	for _, term := range terms {
-		se.popularTerms[term]++
-	}
-
-	// Update trending every 100 queries
-	if se.totalQueries%100 == 0 {
-		go se.updateTrendingQueries()
-	}
-}
-
 func (se *SearchEngine) updateTrendingQueries() {
 	se.mu.RLock()
 	recent := make([]string, 0)
@@ -421,6 +390,11 @@ func (se *SearchEngine) SearchAdvanced(query string, maxResults int) []SearchRes
 
 	results := se.scoreAdvancedResults(queryTerms, candidates, query)
 	log.Printf("Scored %d documents", len(results))
+
+	// Sort results by score (highest first)
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
 
 	for i := range results {
 		results[i].Rank = i + 1
@@ -924,15 +898,39 @@ func (se *SearchEngine) calculateTermPositions(queryTerms []string, content stri
 func (se *SearchEngine) calculateDomainAuthority(url string) float64 {
 	urlLower := strings.ToLower(url)
 
-	authorityDomains := []string{"wikipedia.org", "github.com", "stackoverflow.com", "reddit.com", "medium.com"}
-	for _, domain := range authorityDomains {
+	// High-authority official domains get highest score
+	officialDomains := []string{
+		"hackclub.com", "hackclub.org", "hackclub.io", // Official Hack Club
+		"wikipedia.org", "github.com", "stackoverflow.com",
+		"reuters.com", "bbc.com", "npr.org", "apnews.com",
+		"nationalgeographic.com", "smithsonianmag.com", "scientificamerican.com",
+		"mayoclinic.org", "nih.gov", "cdc.gov",
+	}
+	for _, domain := range officialDomains {
+		if strings.Contains(urlLower, domain) {
+			return 20.0 // Higher score for official/authoritative sources
+		}
+	}
+
+	// Medium-authority domains
+	mediumAuthorityDomains := []string{"reddit.com", "medium.com", "techcrunch.com", "arstechnica.com"}
+	for _, domain := range mediumAuthorityDomains {
 		if strings.Contains(urlLower, domain) {
 			return 10.0
 		}
 	}
 
+	// Social media and secondary sources get lower scores
+	socialDomains := []string{"linkedin.com", "twitter.com", "facebook.com", "instagram.com"}
+	for _, domain := range socialDomains {
+		if strings.Contains(urlLower, domain) {
+			return 5.0 // Lower score for social media
+		}
+	}
+
+	// Educational and government
 	if strings.Contains(urlLower, ".edu") || strings.Contains(urlLower, ".gov") {
-		return 8.0
+		return 15.0
 	}
 
 	return 0.0
@@ -1224,44 +1222,6 @@ func (se *SearchEngine) editDistance(s1, s2 string) int {
 	}
 
 	return 1 + min
-}
-
-func minThree(a, b, c int) int {
-	if a <= b && a <= c {
-		return a
-	}
-	if b <= c {
-		return b
-	}
-	return c
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func minFloat(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxFloat(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func (se *SearchEngine) handleSearchOperators(query string) string {
