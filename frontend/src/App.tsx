@@ -1,335 +1,724 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Search } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
-import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import Box from './Box';
-import SearchResultBox from './SearchResultBox';
-import { motion, AnimatePresence } from 'framer-motion';
-import InteractiveBoxGrid from './InteractiveBoxGrid';
-import BoxGrid from './BoxGrid';
-import { GridProvider } from './GridContext';
-import { useGridLayout } from './useGridLayout';
-
-const getApiBaseUrl = async () => {
-  const res = await fetch('/config.json');
-  const config = await res.json();
-  return config.API_BASE_URL || 'http://localhost:8080';
-};
 
 interface SearchResult {
   url: string;
   title: string;
   snippet: string;
   score: number;
-  timestamp?: string;
 }
 
 interface SearchResponse {
   results: SearchResult[];
   total: number;
-  page: number;
-  total_pages: number;
   time_taken: string;
 }
 
-const AbstractBackground: React.FC = () => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const resizeCanvas = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    };
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const size = Math.max(canvas.width, canvas.height) / 18;
-    const gap = size * 0.13;
-    const cols = Math.ceil(canvas.width / (size + gap)) + 2;
-    const rows = Math.ceil(canvas.height / (size + gap)) + 2;
-    const colors = [
-      '#e3f0ff', '#c7e0fa', '#b3d0f7', '#a5c6ef', '#a9cbe6', '#d6e8fa'
-    ];
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        const angle = ((row + col) % 2 === 0 ? 0.07 : -0.07) + ((row + col) % 3) * 0.04;
-        const x = col * (size + gap) + (row % 2) * (size + gap) * 0.5 - size * 0.2;
-        const y = row * (size + gap) - size * 0.2;
-        const colorIdx = (row + col + (row % 2)) % colors.length;
-        ctx.save();
-        ctx.translate(x + size / 2, y + size / 2);
-        ctx.rotate(angle);
-        ctx.beginPath();
-        ctx.moveTo(-size / 2 + 8, -size / 2);
-        ctx.lineTo(size / 2 - 8, -size / 2);
-        ctx.quadraticCurveTo(size / 2, -size / 2, size / 2, -size / 2 + 8);
-        ctx.lineTo(size / 2, size / 2 - 8);
-        ctx.quadraticCurveTo(size / 2, size / 2, size / 2 - 8, size / 2);
-        ctx.lineTo(-size / 2 + 8, size / 2);
-        ctx.quadraticCurveTo(-size / 2, size / 2, -size / 2, size / 2 - 8);
-        ctx.lineTo(-size / 2, -size / 2 + 8);
-        ctx.quadraticCurveTo(-size / 2, -size / 2, -size / 2 + 8, -size / 2);
-        ctx.closePath();
-        ctx.globalAlpha = 0.93;
-        ctx.fillStyle = colors[colorIdx];
-        ctx.fill();
-        ctx.restore();
-      }
-    }
-    return () => {
-      window.removeEventListener('resize', resizeCanvas);
-    };
-  }, []);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      className="abstract-canvas"
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: '100%',
-        pointerEvents: 'none',
-        zIndex: 1
-      }}
-    />
-  );
-};
-
-const SearchBackground: React.FC = () => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animationIdRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const resizeCanvas = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    };
-
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-
-    let time = 0;
-
-    const animate = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      time += 0.005;
-      
-      ctx.fillStyle = '#2977F5';
-
-      ctx.beginPath();
-      ctx.moveTo(0, canvas.height);
-      for (let x = 0; x <= canvas.width; x += 20) {
-        const height = 120 + Math.sin(x * 0.008 + time * 0.8) * 40 + Math.cos(x * 0.012 + time * 0.6) * 25;
-        ctx.lineTo(x, canvas.height - height);
-      }
-      ctx.lineTo(canvas.width, canvas.height);
-      ctx.closePath();
-      ctx.fill();
-
-      animationIdRef.current = requestAnimationFrame(animate);
-    };
-
-    animate();
-
-    return () => {
-      window.removeEventListener('resize', resizeCanvas);
-      if (animationIdRef.current) {
-        cancelAnimationFrame(animationIdRef.current);
-      }
-    };
-  }, []);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      className="abstract-canvas"
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: '100%',
-        pointerEvents: 'none',
-        zIndex: 1
-      }}
-    />
-  );
-};
-
-function useQueryParam(key: string) {
-  const { search } = useLocation();
-  return React.useMemo(() => new URLSearchParams(search).get(key) || '', [search, key]);
-}
-
-function HomePage({ onSearch }: { onSearch: (q: string) => void }) {
+function App() {
   const [query, setQuery] = useState('');
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSearch(query);
-  };
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') handleSearch(e as any);
-  };
-  return (
-    <div className="home-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', gap: 48 }}>
-      <Box style={{ marginBottom: 32, minWidth: 320, background: '#e3f0ff', textAlign: 'center' }}>
-        <h1 className="logo" style={{ color: '#2977F5', fontSize: 48, fontWeight: 800, letterSpacing: 1 }}>
-          <span className="logo-ex">Soul</span><span className="logo-search">Search</span>
-        </h1>
-      </Box>
-      <Box style={{ minWidth: 320, background: '#b3d0f7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <form onSubmit={handleSearch} className="search-form" style={{ width: '100%' }}>
-          <div className="search-box" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <input
-              type="text"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              onKeyDown={handleKeyPress}
-              placeholder="Search..."
-              className="search-input"
-              autoFocus
-              style={{ flex: 1, fontSize: 20, border: 'none', outline: 'none', background: 'transparent', color: '#2977F5', fontWeight: 500 }}
-            />
-            <button type="submit" className="search-button" style={{ background: '#2977F5', color: '#fff', border: 'none', borderRadius: 12, padding: '8px 18px', fontWeight: 600, fontSize: 18 }}>
-              <Search size={20} color="#fff" />
-            </button>
-          </div>
-        </form>
-      </Box>
-    </div>
-  );
-}
-
-function SearchPage({
-  searchAPI,
-  results,
-  loading,
-  timeTaken,
-  totalResults,
-  totalPages,
-  page,
-  setPage,
-  goHome,
-}: any) {
-  const query = useQueryParam('q');
-  const [input, setInput] = useState(query);
-  useEffect(() => {
-    if (query) searchAPI(query, 1);
-  }, [query]);
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (input.trim()) searchAPI(input, 1);
-  };
-  return (
-    <div className="search-results-page" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 48 }}>
-      <Box style={{ marginBottom: 32, minWidth: 320, background: '#e3f0ff', textAlign: 'center' }}>
-        <h1 className="logo" style={{ color: '#2977F5', fontSize: 36, fontWeight: 800, letterSpacing: 1 }}>
-          <span className="logo-ex">Soul</span><span className="logo-search">Search</span>
-        </h1>
-      </Box>
-      <Box style={{ minWidth: 320, background: '#b3d0f7', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 32 }}>
-        <form onSubmit={handleSearch} className="search-form" style={{ width: '100%' }}>
-          <div className="search-box" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <input
-              type="text"
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              placeholder="Search..."
-              className="search-input"
-              autoFocus
-              style={{ flex: 1, fontSize: 20, border: 'none', outline: 'none', background: 'transparent', color: '#2977F5', fontWeight: 500 }}
-            />
-            <button type="submit" className="search-button" style={{ background: '#2977F5', color: '#fff', border: 'none', borderRadius: 12, padding: '8px 18px', fontWeight: 600, fontSize: 18 }}>
-              <Search size={20} color="#fff" />
-            </button>
-          </div>
-        </form>
-      </Box>
-      <div style={{ width: '100%', maxWidth: 1200, margin: '0 auto', marginBottom: 32 }}>
-        <AnimatePresence>
-          {results.length > 0 && results.map((result: any, index: number) => (
-            <motion.div key={result.url + index} layout initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.8 }} transition={{ type: 'spring', stiffness: 200, damping: 24 }}>
-              <SearchResultBox title={result.title} url={result.url} snippet={result.snippet} />
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
-      {totalPages > 1 && (
-        <div className="pagination" style={{ marginTop: 24 }}>
-          {Array.from({ length: totalPages }, (_, i) => (
-            <button
-              key={i}
-              onClick={() => setPage(i + 1)}
-              className={`page-button ${page === i + 1 ? 'active' : ''}`}
-              style={{ color: page === i + 1 ? '#fff' : '#2977F5', background: page === i + 1 ? '#2977F5' : '#fff', borderColor: '#2977F5', borderRadius: 12, fontWeight: 600, fontSize: 16, margin: 2, padding: '6px 18px' }}
-            >
-              {i + 1}
-            </button>
-          ))}
-        </div>
-      )}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 40, gap: 24 }}>
-        <button onClick={goHome} className="home-button" style={{ background: '#2977F5', color: '#fff', borderRadius: 24, fontWeight: 600, fontSize: 18, padding: '12px 32px', boxShadow: '0 4px 16px rgba(41,119,245,0.13)' }}>
-          Back to Home
-        </button>
-        {results.length > 0 && !loading && (
-          <div className="results-info">
-            {totalResults} results found in {timeTaken}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-type BoxType = {
-  key: string;
-  color: string;
-  content?: React.ReactNode;
-  highlight?: boolean;
-};
-
-function AppWithRouter() {
+  const [showContent, setShowContent] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [timeTaken, setTimeTaken] = useState('');
+  const [searchTime, setSearchTime] = useState('');
   const [totalResults, setTotalResults] = useState(0);
-  const [page, setPage] = useState(1);
-  const [mode, setMode] = useState<'home' | 'search'>('home');
-  const [query, setQuery] = useState('');
-  const cols = Math.max(5, Math.floor(window.innerWidth / 160));
-  const rows = Math.max(5, Math.floor(window.innerHeight / 160));
-  const boxSize = Math.floor(window.innerWidth / cols) - 12;
-  const gap = 12;
-  useGridLayout({ mode, query, results });
-  return (
-    <BoxGrid size={boxSize} gap={gap} />
-  );
-}
+  const [error, setError] = useState('');
+  const [mode, setMode] = useState<'home' | 'results'>('home');
+  const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
-function App() {
-  const cols = Math.max(5, Math.floor(window.innerWidth / 160));
-  const rows = Math.max(5, Math.floor(window.innerHeight / 160));
+  useEffect(() => {
+    setTimeout(() => setShowContent(true), 500);
+    
+    const handleResize = () => {
+      setDimensions({ width: window.innerWidth, height: window.innerHeight });
+    };
+    
+    window.addEventListener('resize', handleResize);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [mode]);
+
+  useEffect(() => {
+    console.log(`MODE CHANGED: ${mode}`);
+  }, [mode]);
+
+  const fetchSuggestions = useCallback(async (searchQuery: string) => {
+    if (!searchQuery.trim() || searchQuery.length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+    
+    try {
+      const response = await fetch(`http://localhost:8080/suggest?q=${encodeURIComponent(searchQuery)}`);
+      if (response.ok) {
+        const data = await response.json();
+        setSuggestions(data.suggestions || []);
+        setShowSuggestions((data.suggestions || []).length > 0);
+      }
+    } catch (err) {
+      console.error('Suggestions error:', err);
+      setSuggestions([]);
+      setShowSuggestions(false);
+    }
+  }, []);
+
+  const performSearch = useCallback(async (searchQuery: string) => {
+    if (!searchQuery.trim()) return;
+    
+    setLoading(true);
+    setError('');
+    setMode('results');
+    
+    try {
+      const response = await fetch(`http://localhost:8080/api/dynamic-search?q=${encodeURIComponent(searchQuery)}`);
+      if (!response.ok) throw new Error('Search failed');
+      
+      const data: SearchResponse = await response.json();
+      setResults(data.results || []);
+      setTotalResults(data.total || 0);
+      setSearchTime(data.time_taken || '');
+      setLoading(false);
+    } catch (err) {
+      setError('Search failed. Please try again.');
+      console.error('Search error:', err);
+      setLoading(false);
+      setMode('home');
+    }
+  }, []);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setShowSuggestions(false);
+    performSearch(query);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setQuery(value);
+    if (mode === 'home') {
+      fetchSuggestions(value);
+    }
+  };
+
+  const selectSuggestion = (suggestion: string) => {
+    setQuery(suggestion);
+    setShowSuggestions(false);
+    performSearch(suggestion);
+  };
+
+  const goHome = () => {
+    setMode('home');
+    setResults([]);
+    setQuery('');
+    setError('');
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setLoading(false);
+  };
+
+  const GRID_COLS = dimensions.width < 768 ? 6 : 8;
+  const GRID_ROWS = dimensions.width < 768 ? 7 : 5;
+  const gap = Math.max(6, Math.min(16, dimensions.width / 120));
+  const boxWidth = (dimensions.width - (GRID_COLS - 1) * gap) / GRID_COLS;
+  const boxHeight = (dimensions.height - (GRID_ROWS - 1) * gap) / GRID_ROWS;
+
+  const createGrid = () => {
+    const grid = [];
+    
+    for (let row = 0; row < GRID_ROWS; row++) {
+      for (let col = 0; col < GRID_COLS; col++) {
+        const isTitle = row === (GRID_ROWS === 7 ? 2 : 1) && col >= (GRID_COLS === 6 ? 1 : 2) && col <= (GRID_COLS === 6 ? 4 : 5);
+        const isSearch = row === (GRID_ROWS === 7 ? 4 : 3) && col >= (GRID_COLS === 6 ? 1 : 2) && col <= (GRID_COLS === 6 ? 4 : 5);
+        const isBackButton = mode === 'results' && row === 0 && col === 0;
+        const isResultsInfo = mode === 'results' && row === 0 && col === (GRID_COLS - 1);
+        const isResultArea = mode === 'results' && row >= (GRID_ROWS === 7 ? 5 : 4) && col >= (GRID_COLS === 6 ? 0 : 1) && col <= (GRID_COLS === 6 ? 5 : 6);
+        
+        // Color based on row position - lighter at top, darker at bottom
+        const rowProgress = row / (GRID_ROWS - 1);
+        const getRowColor = (progress: number) => {
+          const lightBlues = ['#d6e8fa', '#d6e8fa', '#c7e0fa', '#b8d6f5', '#b3d0f7'];
+          const darkBlues = ['#a5c6ef', '#8fb3e8', '#7ba3dc', '#6b9bd2', '#5a8bc8'];
+          
+          if (progress <= 0.5) {
+            // Top half - use light blues
+            const index = Math.floor(progress * 2 * lightBlues.length);
+            return lightBlues[Math.min(index, lightBlues.length - 1)];
+          } else {
+            // Bottom half - use dark blues
+            const index = Math.floor((progress - 0.5) * 2 * darkBlues.length);
+            return darkBlues[Math.min(index, darkBlues.length - 1)];
+          }
+        };
+        
+        const rowColor = getRowColor(rowProgress);
+        
+        let content: React.ReactNode = null;
+        
+        if (isTitle && col === (GRID_COLS === 6 ? 1 : 2) && showContent) {
+          content = (
+            <div style={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: mode === 'results' ? 'pointer' : 'default',
+              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+            }} 
+            onClick={mode === 'results' ? goHome : undefined}
+            onMouseEnter={(e) => {
+              if (mode === 'results') {
+                e.currentTarget.style.transform = 'scale(1.05) rotate(-1deg)';
+              } else {
+                e.currentTarget.style.transform = 'scale(1.02)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1) rotate(0deg)';
+            }}>
+              <span style={{
+                fontSize: dimensions.width < 768 ? 48 : 64,
+                fontWeight: 800,
+                fontFamily: '"Trebuchet MS", "Lucida Grande", "Lucida Sans Unicode", "Lucida Sans", Tahoma, sans-serif',
+                letterSpacing: 1,
+                textAlign: 'center',
+                lineHeight: 1,
+                whiteSpace: 'nowrap'
+              }}>
+                <span style={{
+                  color: 'transparent',
+                  WebkitTextStroke: '2px #2977F5'
+                }}>Soul</span>
+                <span style={{
+                  color: '#2977F5',
+                  WebkitTextStroke: '2px #2977F5'
+                }}>Search</span>
+              </span>
+            </div>
+          );
+        }
+        
+        if (isSearch && col === (GRID_COLS === 6 ? 1 : 2) && showContent) {
+          content = (
+            <div style={{ 
+              width: '100%', 
+              height: '100%',
+              padding: 16, 
+              position: 'relative',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+            <form onSubmit={handleSubmit} style={{ width: '100%', maxWidth: '85%' }}>
+              {error && (
+                <div style={{
+                  color: '#e74c3c',
+                  fontSize: 11,
+                  marginBottom: 6,
+                  textAlign: 'center',
+                  fontFamily: 'monospace'
+                }}>
+                  {error}
+                </div>
+              )}
+              <input
+                type="text"
+                value={query}
+                onChange={handleInputChange}
+                placeholder="Search..."
+                disabled={loading}
+                style={{
+                  width: '100%',
+                  fontSize: mode === 'results' ? (dimensions.width < 768 ? 13 : 15) : (dimensions.width < 768 ? 15 : 17),
+                  border: '1px solid #2977F5',
+                  outline: 'none',
+                  background: 'transparent',
+                  color: '#2977F5',
+                  fontWeight: 600,
+                  padding: mode === 'results' ? (dimensions.width < 768 ? 8 : 10) : (dimensions.width < 768 ? 10 : 12),
+                  borderRadius: 6,
+                  marginBottom: 8,
+                  fontFamily: 'monospace',
+                  opacity: loading ? 0.7 : 1,
+                  textAlign: 'center'
+                }}
+                autoFocus={mode === 'home'}
+                onFocus={() => {
+                  if (mode === 'home' && query && suggestions.length > 0) {
+                    setShowSuggestions(true);
+                  }
+                }}
+                onBlur={() => {
+                  setTimeout(() => setShowSuggestions(false), 150);
+                }}
+              />
+              <button
+                type="submit"
+                disabled={loading || !query.trim()}
+                style={{
+                  background: 'transparent',
+                  color: '#2977F5',
+                  border: '1px solid #2977F5',
+                  borderRadius: 4,
+                  padding: mode === 'results' ? (dimensions.width < 768 ? '4px 8px' : '6px 12px') : (dimensions.width < 768 ? '6px 12px' : '8px 16px'),
+                  fontWeight: 700,
+                  fontSize: mode === 'results' ? (dimensions.width < 768 ? 10 : 12) : (dimensions.width < 768 ? 12 : 14),
+                  width: 'auto',
+                  fontFamily: 'monospace',
+                  textTransform: 'uppercase',
+                  letterSpacing: 1,
+                  cursor: loading || !query.trim() ? 'not-allowed' : 'pointer',
+                  opacity: loading || !query.trim() ? 0.5 : 1,
+                  margin: '0 auto',
+                  display: 'block'
+                }}
+              >
+                {loading ? 'Searching...' : 'Search'}
+              </button>
+              {showSuggestions && mode === 'home' && (
+                <div style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  right: 0,
+                  background: 'rgba(255,255,255,0.95)',
+                  border: '2px solid rgba(41,119,245,0.2)',
+                  borderTop: 'none',
+                  borderRadius: '0 0 10px 10px',
+                  maxHeight: '160px',
+                  overflowY: 'auto',
+                  zIndex: 1000,
+                  boxShadow: '0 6px 20px rgba(41,119,245,0.15)',
+                  backdropFilter: 'blur(8px)'
+                }}>
+                  {suggestions.map((suggestion, index) => (
+                      <div
+                        key={index}
+                        style={{
+                          padding: '12px 16px',
+                          cursor: 'pointer',
+                          fontFamily: 'monospace',
+                          fontSize: '16px',
+                          color: '#2977F5',
+                          borderBottom: index < suggestions.length - 1 ? '1px solid #e0e0e0' : 'none',
+                          transition: 'background 0.2s'
+                        }}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => selectSuggestion(suggestion)}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'linear-gradient(90deg, #f0f8ff, #e6f3ff)';
+                          e.currentTarget.style.transform = 'translateX(8px) scale(1.02)';
+                          e.currentTarget.style.borderLeft = '4px solid #2977F5';
+                          e.currentTarget.style.paddingLeft = '12px';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = '#fff';
+                          e.currentTarget.style.transform = 'translateX(0px) scale(1)';
+                          e.currentTarget.style.borderLeft = 'none';
+                          e.currentTarget.style.paddingLeft = '16px';
+                        }}
+                      >
+                        {suggestion}
+                      </div>
+                    ))}
+                </div>
+              )}
+            </form>
+            </div>
+          );
+        }
+        
+        if (isResultArea && showContent) {
+          content = null;
+        }
+        
+        const width = (isTitle || isSearch) && col >= (GRID_COLS === 6 ? 1 : 2) && col <= (GRID_COLS === 6 ? 4 : 5) ? 
+          boxWidth * 4 + gap * 3 : boxWidth;
+        const height = boxHeight;
+        
+        if ((isTitle || isSearch) && col > (GRID_COLS === 6 ? 1 : 2)) continue;
+        
+        const bottomUpDelay = (GRID_ROWS - 1 - row) * 80 + col * 20;
+        
+        const shouldFloat = !content && !loading && showContent && Math.random() > 0.7;
+        const floatDelay = Math.random() * 2;
+        
+        grid.push(
+          <div
+            key={`${row}-${col}`}
+            className="grid-box"
+            style={{
+              position: 'absolute',
+              left: col * (boxWidth + gap),
+              top: row * (boxHeight + gap),
+              width,
+              height,
+              background: content ? (isSearch ? '#b3d0f7' : (isTitle ? '#d6e8fa' : rowColor)) : rowColor,
+              borderRadius: 18,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: content ? '0 2px 12px 0 rgba(41,119,245,0.07)' : '0 2px 12px 0 rgba(41,119,245,0.07)',
+              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+              cursor: (content && (isTitle || isSearch)) || (content && isResultArea) ? 'pointer' : 'default',
+              opacity: showContent ? 1 : 0,
+              animation: showContent ? `fadeInScale 0.5s cubic-bezier(0.4, 0, 0.2, 1) ${(row * 0.08 + col * 0.03)}s both${shouldFloat ? `, gentleFloat 4s ease-in-out infinite ${floatDelay}s` : ''}` : undefined
+            }}
+            onMouseEnter={(e) => {
+              if (content && !loading) {
+                if (isResultArea) {
+                  e.currentTarget.style.transform = 'scale(1.03) rotate(-0.5deg)';
+                  e.currentTarget.style.boxShadow = '0 0 0 4px #2977F5, 0 15px 50px rgba(41,119,245,0.3)';
+                  e.currentTarget.style.filter = 'brightness(1.05)';
+                }
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (content && !loading) {
+                if (isResultArea) {
+                  e.currentTarget.style.transform = 'scale(1) rotate(0deg)';
+                  e.currentTarget.style.boxShadow = '0 0 0 3px #2977F5, 0 8px 32px rgba(41,119,245,0.15)';
+                  e.currentTarget.style.filter = 'brightness(1)';
+                }
+              }
+            }}
+          >
+            {content}
+          </div>
+        );
+      }
+    }
+    
+    return grid;
+  };
+
+  const gridWidth = GRID_COLS * boxWidth + (GRID_COLS - 1) * gap;
+  const gridHeight = GRID_ROWS * boxHeight + (GRID_ROWS - 1) * gap;
+
   return (
-    <GridProvider rows={rows} cols={cols}>
-      <Router>
-        <AppWithRouter />
-      </Router>
-    </GridProvider>
+    <div style={{
+      width: '100vw',
+      height: '100vh',
+      overflow: 'hidden',
+      position: 'relative',
+      background: '#fff'
+    }}>
+      <div style={{
+        position: 'absolute',
+        width: gridWidth,
+        height: gridHeight,
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)'
+      }}>
+        {createGrid()}
+      </div>
+      
+      {mode === 'results' && !loading && results.length > 0 && (
+        <div style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: '50vh',
+          background: 'linear-gradient(180deg, #e8f0fe 0%, #f8f9fa 50%, #ffffff 100%)',
+          border: '4px solid #2977F5',
+          borderBottom: 'none',
+          padding: '20px',
+          zIndex: 1000,
+          animation: 'slideUp 0.5s ease-out',
+          boxShadow: '0 -8px 0px rgba(41,119,245,0.3)',
+          display: 'flex',
+          flexDirection: 'column'
+        }}>
+          <div style={{
+            color: '#2977F5',
+            fontSize: '24px',
+            fontWeight: 800,
+            fontFamily: 'Trebuchet MS, monospace',
+            marginBottom: '20px',
+            textAlign: 'center',
+            textShadow: '2px 2px 0px rgba(41,119,245,0.2)'
+          }}>
+            SEARCH RESULTS
+          </div>
+          
+          <div style={{
+            display: 'flex',
+            gap: '20px',
+            height: 'calc(100% - 120px)',
+            maxWidth: '1400px',
+            margin: '0 auto',
+            width: '100%',
+            padding: '0 20px',
+            justifyContent: 'center'
+          }}>
+            {results[0] && (
+              <div style={{
+                flex: '0 0 50%',
+                background: '#fff',
+                border: '4px solid #2977F5',
+                padding: '20px',
+                cursor: 'pointer',
+                transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                boxShadow: '6px 6px 0px rgba(41,119,245,0.3)',
+                transform: 'translate(0, 0)',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center'
+              }}
+              onClick={() => window.open(results[0].url, '_blank', 'noopener,noreferrer')}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translate(-5px, -5px) scale(1.02) rotate(-0.5deg)';
+                e.currentTarget.style.boxShadow = '12px 12px 0px rgba(41,119,245,0.5)';
+                e.currentTarget.style.background = 'linear-gradient(135deg, #f8f9fa, #e6f3ff)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translate(0, 0) scale(1) rotate(0deg)';
+                e.currentTarget.style.boxShadow = '6px 6px 0px rgba(41,119,245,0.3)';
+                e.currentTarget.style.background = '#fff';
+              }}
+              >
+                <div style={{
+                  color: '#2977F5',
+                  fontWeight: 800,
+                  fontSize: '20px',
+                  fontFamily: 'Trebuchet MS, monospace',
+                  lineHeight: 1.2,
+                  marginBottom: '12px',
+                  textShadow: '2px 2px 0px rgba(41,119,245,0.2)',
+                  textAlign: 'center'
+                }}>
+                  {results[0].title}
+                </div>
+                <div style={{
+                  color: '#444',
+                  fontSize: '14px',
+                  fontFamily: 'monospace',
+                  lineHeight: 1.4,
+                  marginBottom: '16px',
+                  textAlign: 'center',
+                  fontWeight: 500
+                }}>
+                  {results[0].snippet}
+                </div>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  gap: '16px',
+                  borderTop: '3px solid #2977F5',
+                  paddingTop: '12px'
+                }}>
+                  <div style={{
+                    color: '#2977F5',
+                    fontSize: '12px',
+                    fontFamily: 'monospace',
+                    fontWeight: 700,
+                    textTransform: 'uppercase'
+                  }}>
+                    TOP RESULT
+                  </div>
+                  <div style={{
+                    color: '#fff',
+                    fontSize: '12px',
+                    fontFamily: 'monospace',
+                    fontWeight: 600,
+                    background: '#2977F5',
+                    padding: '4px 8px',
+                    boxShadow: '2px 2px 0px rgba(0,0,0,0.2)'
+                  }}>
+                    {results[0].score.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {results.length > 1 && (
+              <div style={{
+                flex: '0 0 50%',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+                overflowY: 'hidden'
+              }}>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '12px',
+                  height: '100%',
+                  alignContent: 'start'
+                }}>
+                  {results.slice(1, 5).map((result, index) => (
+                    <div
+                      key={index + 1}
+                      style={{
+                        background: '#f8f9fa',
+                        border: '3px solid #2977F5',
+                        padding: '12px',
+                        cursor: 'pointer',
+                        boxShadow: '3px 3px 0px rgba(41,119,245,0.3)',
+                        transform: 'translate(0, 0)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        minHeight: '120px'
+                      }}
+                      onClick={() => window.open(result.url, '_blank', 'noopener,noreferrer')}
+                    >
+                      <div style={{
+                        color: '#2977F5',
+                        fontWeight: 800,
+                        fontSize: '14px',
+                        fontFamily: 'Trebuchet MS, monospace',
+                        lineHeight: 1.2,
+                        marginBottom: '6px',
+                        textShadow: '1px 1px 0px rgba(41,119,245,0.2)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical'
+                      }}>
+                        {result.title}
+                      </div>
+                      <div style={{
+                        color: '#666',
+                        fontSize: '11px',
+                        fontFamily: 'monospace',
+                        lineHeight: 1.3,
+                        marginBottom: '8px',
+                        fontWeight: 500,
+                        flex: 1,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 3,
+                        WebkitBoxOrient: 'vertical'
+                      }}>
+                        {result.snippet}
+                      </div>
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        borderTop: '2px solid #2977F5',
+                        paddingTop: '6px'
+                      }}>
+                        <div style={{
+                          color: '#2977F5',
+                          fontSize: '9px',
+                          fontFamily: 'monospace',
+                          fontWeight: 700,
+                          textTransform: 'uppercase'
+                        }}>
+                          #{index + 2}
+                        </div>
+                        <div style={{
+                          color: '#fff',
+                          fontSize: '9px',
+                          fontFamily: 'monospace',
+                          fontWeight: 600,
+                          background: '#2977F5',
+                          padding: '2px 4px',
+                          boxShadow: '1px 1px 0px rgba(0,0,0,0.2)'
+                        }}>
+                          {result.score.toFixed(2)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {results.length > 5 && (
+                  <div style={{
+                    background: '#2977F5',
+                    color: '#fff',
+                    padding: '8px',
+                    textAlign: 'center',
+                    fontFamily: 'Trebuchet MS, monospace',
+                    fontWeight: 800,
+                    fontSize: '12px',
+                    boxShadow: '3px 3px 0px rgba(0,0,0,0.3)',
+                    textShadow: '1px 1px 0px rgba(0,0,0,0.3)'
+                  }}>
+                    +{results.length - 5} MORE RESULTS
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          
+          <div style={{
+            marginTop: 'auto',
+            textAlign: 'center',
+            paddingTop: '16px'
+          }}>
+            <button
+              onClick={goHome}
+              className="back-to-home-button"
+            >
+              ← BACK TO HOME
+            </button>
+          </div>
+        </div>
+      )}
+      
+      {mode === 'results' && !loading && results.length === 0 && (
+        <div style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: '20vh',
+          background: 'linear-gradient(180deg, #ffebee 0%, #f8f9fa 50%, #ffffff 100%)',
+          border: '4px solid #DC143C',
+          borderBottom: 'none',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          animation: 'slideUp 0.5s ease-out',
+          boxShadow: '0 -8px 0px rgba(220,20,60,0.3)'
+        }}>
+          <div style={{ 
+            textAlign: 'center',
+            background: '#fff',
+            padding: '24px 32px',
+            boxShadow: '6px 6px 0px rgba(0,0,0,0.3)',
+            border: 'none'
+          }}>
+            <div style={{
+              color: '#DC143C',
+              fontSize: '24px',
+              fontWeight: 800,
+              fontFamily: 'Trebuchet MS, monospace',
+              marginBottom: '8px',
+              textShadow: '2px 2px 0px rgba(220,20,60,0.2)'
+            }}>
+              NO RESULTS FOUND
+            </div>
+            <div style={{
+              color: '#444',
+              fontSize: '14px',
+              fontFamily: 'monospace',
+              fontWeight: 600,
+              marginBottom: '16px'
+            }}>
+              The sloth bear couldn't find anything. Try different keywords!
+            </div>
+            <button
+              onClick={goHome}
+              className="back-to-home-button-no-results"
+            >
+              ← BACK TO HOME
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

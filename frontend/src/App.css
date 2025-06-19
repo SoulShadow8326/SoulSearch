@@ -9,8 +9,7 @@ body, html {
   height: 100vh;
   min-height: 100vh;
   min-width: 100vw;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden !important;
   position: relative;
 }
 
@@ -50,8 +49,8 @@ body {
   right: 0;
   bottom: 0;
   background: 
-    radial-gradient(ellipse at 20% 30%, rgba(41, 119, 245, 0.05) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 70%, rgba(24, 41, 48, 0.03) 0%, transparent 50%);
+    radial-gradient(ellipse at 20% 30%, rgba(41, 119, 245, 0.02) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 70%, rgba(24, 41, 48, 0.015) 0%, transparent 50%);
   pointer-events: none;
 }
 
@@ -73,6 +72,72 @@ body {
 @keyframes slowly-rotate {
   0% { transform: translate(-50%, -50%) rotate(0deg); }
   100% { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+@keyframes fadeInScale {
+  0% {
+    opacity: 0;
+    transform: scale(0.8) rotate(-1deg);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.02) rotate(0.5deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(41,119,245,0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 20px rgba(41,119,245,0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes backgroundFloat {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes gentleFloat {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-3px) rotate(0.5deg);
+  }
+}
+
+@keyframes satisfyingPulse {
+  0%, 100% {
+    box-shadow: 0 2px 12px 0 rgba(41,119,245,0.07);
+  }
+  50% {
+    box-shadow: 0 4px 20px 0 rgba(41,119,245,0.15);
+  }
+}
+
+.loading-shimmer {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
 }
 
 .home-container {
@@ -100,10 +165,11 @@ body {
 
 .logo {
   font-size: clamp(3rem, 8vw, 5.5rem);
-  font-weight: 700;
+  font-weight: 800;
+  font-family: "Trebuchet MS", "Lucida Grande", "Lucida Sans Unicode", "Lucida Sans", Tahoma, sans-serif;
   color: #2977F5;
   margin-bottom: 20px;
-  letter-spacing: -2px;
+  letter-spacing: 1px;
   position: relative;
   text-shadow: none;
   transform: none;
@@ -113,14 +179,14 @@ body {
 
 .logo .logo-ex {
   color: transparent;
-  -webkit-text-stroke: 2.5px #2977F5;
-  font-weight: 700;
+  -webkit-text-stroke: 2px #2977F5;
+  font-weight: 800;
 }
 
 .logo .logo-search {
   color: #2977F5;
-  -webkit-text-stroke: 0px;
-  font-weight: 700;
+  -webkit-text-stroke: 2px #2977F5;
+  font-weight: 800;
 }
 
 .tagline {
@@ -160,15 +226,15 @@ body {
   margin: 0 auto 2.5em auto;
   border: 1.5px solid #2977F5;
   position: relative;
-  transition: box-shadow 0.2s, border 0.2s, background 0.2s;
+  transition: box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1), border 0.3s ease, background 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   backdrop-filter: blur(12px) saturate(1.2);
   height: 56px;
 }
 
 .search-box:hover, .search-box:focus-within {
-  box-shadow: 0 12px 36px 0 rgba(41,119,245,0.18), 0 4px 16px 0 rgba(24,41,48,0.10);
+  box-shadow: 0 8px 25px 0 rgba(41,119,245,0.2), 0 4px 15px 0 rgba(41,119,245,0.15);
+  transform: translateY(-2px) scale(1.01);
   border-color: #2977F5;
-  background: rgba(255,255,255,0.75);
 }
 
 .search-icon {
@@ -232,7 +298,7 @@ body {
 
 .search-button:hover, .search-button:focus {
   background: none;
-  color: #1a4e99;
+  color: #2977F5;
 }
 
 .search-results-page {
@@ -311,9 +377,7 @@ body {
 }
 
 .result-card:hover {
-  box-shadow: 0 8px 36px 0 rgba(41,119,245,0.18), 0 4px 16px 0 rgba(24,41,48,0.10);
-  border-color: #2977F5;
-  background: rgba(255,255,255,0.22);
+  box-shadow: 0 6px 20px 0 rgba(41,119,245,0.15), 0 2px 10px 0 rgba(41,119,245,0.12);
 }
 
 .result-title {
@@ -327,7 +391,7 @@ body {
 }
 
 .result-title:hover {
-  color: #1a4e99;
+  color: #2977F5;
   text-decoration: underline;
 }
 
@@ -359,7 +423,7 @@ body {
 }
 
 .page-button {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.8), rgba(37, 99, 235, 0.8));
+  background: rgba(41, 119, 245, 0.85);
   color: white;
   border: 1.5px solid #2977F5;
   padding: 0.6em 1.4em;
@@ -373,16 +437,13 @@ body {
 }
 
 .page-button.active, .page-button:focus {
-  background: linear-gradient(135deg, #2977F5, #1a4e99);
+  background: #2977F5;
   color: #fff;
   box-shadow: 0 4px 16px rgba(41,119,245,0.18);
 }
 
 .page-button:hover:not(:disabled) {
-  background: linear-gradient(135deg, #2977F5, #1a4e99);
-  color: #fff;
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(59, 130, 246, 0.18);
+  box-shadow: 0 6px 20px rgba(41,119,245,0.25);
 }
 
 .page-button:disabled {
@@ -391,6 +452,31 @@ body {
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.grid-box {
+  will-change: transform;
+  backface-visibility: hidden;
+  transform-style: preserve-3d;
+}
+
+.gentle-float {
+  animation: gentleFloat 4s ease-in-out infinite;
+}
+
+.satisfying-pulse {
+  animation: satisfyingPulse 2s ease-in-out infinite;
 }
 
 @media (max-width: 900px) {
@@ -408,4 +494,54 @@ body {
     max-width: 98vw;
     padding: 0 8px;
   }
+}
+
+.back-to-home-button {
+  background: #2977F5;
+  color: #fff;
+  border: none;
+  padding: 12px 24px;
+  font-weight: 800;
+  font-size: 14px;
+  font-family: 'Trebuchet MS', monospace;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(41,119,245,0.25);
+  transition: box-shadow 0.2s ease;
+  text-shadow: none;
+  border-radius: 8px;
+}
+
+.back-to-home-button:hover {
+  box-shadow: 0 6px 20px rgba(41,119,245,0.35);
+  transform: translateY(-2px) scale(1.02);
+}
+
+.back-to-home-button:active {
+  transform: translateY(0px) scale(0.98);
+  box-shadow: 0 2px 8px rgba(41,119,245,0.3);
+}
+
+.back-to-home-button-no-results {
+  background: #DC143C;
+  color: #fff;
+  border: none;
+  padding: 10px 20px;
+  font-weight: 800;
+  font-size: 12px;
+  font-family: 'Trebuchet MS', monospace;
+  cursor: pointer;
+  box-shadow: 0 3px 8px rgba(220,20,60,0.25);
+  transition: box-shadow 0.2s ease;
+  text-shadow: none;
+  border-radius: 6px;
+}
+
+.back-to-home-button-no-results:hover {
+  box-shadow: 0 5px 16px rgba(220,20,60,0.35);
+  transform: translateY(-2px) scale(1.02);
+}
+
+.back-to-home-button-no-results:active {
+  transform: translateY(0px) scale(0.98);
+  box-shadow: 0 2px 6px rgba(220,20,60,0.25);
 }
