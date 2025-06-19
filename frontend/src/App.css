@@ -26,7 +26,11 @@ body {
   font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: #FFFFFF;
+  background: 
+    linear-gradient(90deg, rgba(41,119,245,0.03) 1px, transparent 1px),
+    linear-gradient(rgba(41,119,245,0.03) 1px, transparent 1px),
+    #FFFFFF;
+  background-size: 20px 20px;
   color: #434343;
   overflow-x: hidden;
 }

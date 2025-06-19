@@ -122,7 +122,7 @@ function App() {
 
   const GRID_COLS = dimensions.width < 768 ? 6 : 8;
   const GRID_ROWS = dimensions.width < 768 ? 7 : 5;
-  const gap = Math.max(6, Math.min(16, dimensions.width / 120));
+  const gap = 0;
   const boxWidth = (dimensions.width - (GRID_COLS - 1) * gap) / GRID_COLS;
   const boxHeight = (dimensions.height - (GRID_ROWS - 1) * gap) / GRID_ROWS;
 
@@ -356,7 +356,6 @@ function App() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
               filter: content ? 'none' : 'blur(1px)',
               transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
               cursor: (content && (isTitle || isSearch)) || (content && isResultArea) ? 'pointer' : 'default',
