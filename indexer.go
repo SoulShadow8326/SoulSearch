@@ -2,11 +2,11 @@ package main
 
 import (
 	"bufio"
-	"fmt"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -16,8 +16,8 @@ type TermFreq struct {
 }
 
 type InvertedIndex struct {
-	Terms map[string][]TermFreq
-	Docs  map[string]Document
+	Terms *sync.Map
+	Docs  *sync.Map
 }
 
 type Document struct {
@@ -30,7 +30,7 @@ type Document struct {
 
 type Indexer struct {
 	index     *InvertedIndex
-	stopWords map[string]bool
+	stopWords map[string]struct{}
 }
 
 func CreateIndexer() *Indexer {
@@ -38,8 +38,8 @@ func CreateIndexer() *Indexer {
 
 	return &Indexer{
 		index: &InvertedIndex{
-			Terms: make(map[string][]TermFreq),
-			Docs:  make(map[string]Document),
+			Terms: &sync.Map{},
+			Docs:  &sync.Map{},
 		},
 		stopWords: stopWords,
 	}
@@ -48,28 +48,36 @@ func CreateIndexer() *Indexer {
 func (idx *Indexer) BuildIndex() *InvertedIndex {
 	pages := idx.loadPages()
 	if len(pages) == 0 {
-		fmt.Println("No pages found. Run crawler first.")
 		return idx.index
 	}
 
 	pageRanks := idx.calculatePageRank(pages)
 
-	for _, page := range pages {
-		doc := Document{
-			URL:      page.URL,
-			Title:    page.Title,
-			Content:  page.Content,
-			Length:   len(strings.Fields(page.Content)),
-			PageRank: pageRanks[page.URL],
-		}
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 100)
 
-		idx.index.Docs[page.URL] = doc
-		idx.processDocument(doc)
+	for _, page := range pages {
+		wg.Add(1)
+		go func(p Page) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			doc := Document{
+				URL:      p.URL,
+				Title:    p.Title,
+				Content:  p.Content,
+				Length:   len(strings.Fields(p.Content)),
+				PageRank: pageRanks[p.URL],
+			}
+
+			idx.index.Docs.Store(p.URL, doc)
+			idx.processDocument(doc)
+		}(page)
 	}
 
+	wg.Wait()
 	idx.saveIndex()
-	fmt.Printf("Indexed %d documents with %d unique terms\n",
-		len(idx.index.Docs), len(idx.index.Terms))
 	return idx.index
 }
 
@@ -102,14 +110,14 @@ func (idx *Indexer) loadPages() []Page {
 func (idx *Indexer) calculatePageRank(pages []Page) map[string]float64 {
 	linkGraph := make(map[string][]string)
 	inlinks := make(map[string]int)
-	allURLs := make(map[string]bool)
+	allURLs := make(map[string]struct{})
 
 	for _, page := range pages {
-		allURLs[page.URL] = true
+		allURLs[page.URL] = struct{}{}
 		linkGraph[page.URL] = page.Links
 
 		for _, link := range page.Links {
-			if allURLs[link] {
+			if _, exists := allURLs[link]; exists {
 				inlinks[link]++
 			}
 		}
@@ -147,7 +155,7 @@ func (idx *Indexer) processDocument(doc Document) {
 	termFreqs := make(map[string]int)
 
 	for _, word := range words {
-		if !idx.stopWords[word] && len(word) > 1 {
+		if _, stopWord := idx.stopWords[word]; !stopWord && len(word) > 1 {
 			termFreqs[word]++
 
 			stemmed := idx.stemWord(word)
@@ -165,10 +173,18 @@ func (idx *Indexer) processDocument(doc Document) {
 			score *= 2.0
 		}
 
-		idx.index.Terms[term] = append(idx.index.Terms[term], TermFreq{
+		termFreq := TermFreq{
 			URL:   doc.URL,
 			Score: score,
-		})
+		}
+
+		if existing, exists := idx.index.Terms.Load(term); exists {
+			termFreqs := existing.([]TermFreq)
+			termFreqs = append(termFreqs, termFreq)
+			idx.index.Terms.Store(term, termFreqs)
+		} else {
+			idx.index.Terms.Store(term, []TermFreq{termFreq})
+		}
 	}
 }
 
@@ -205,16 +221,20 @@ func (idx *Indexer) saveIndex() {
 	}
 	defer termsFile.Close()
 
-	for term, termFreqs := range idx.index.Terms {
+	idx.index.Terms.Range(func(key, value interface{}) bool {
+		term := key.(string)
+		termFreqs := value.([]TermFreq)
+
 		sort.Slice(termFreqs, func(i, j int) bool {
 			return termFreqs[i].Score > termFreqs[j].Score
 		})
 
 		for _, tf := range termFreqs {
-			line := fmt.Sprintf("%s|%s|%.6f\n", term, tf.URL, tf.Score)
+			line := term + "|" + tf.URL + "|" + strconv.FormatFloat(tf.Score, 'f', 6, 64) + "\n"
 			termsFile.WriteString(line)
 		}
-	}
+		return true
+	})
 
 	docsFile, err := os.Create("data/docs.dat")
 	if err != nil {
@@ -222,13 +242,17 @@ func (idx *Indexer) saveIndex() {
 	}
 	defer docsFile.Close()
 
-	for url, doc := range idx.index.Docs {
-		line := fmt.Sprintf("%s|%s|%s|%d|%.6f\n",
-			url, doc.Title,
-			strings.ReplaceAll(doc.Content, "\n", " "),
-			doc.Length, doc.PageRank)
+	idx.index.Docs.Range(func(key, value interface{}) bool {
+		url := key.(string)
+		doc := value.(Document)
+
+		line := url + "|" + doc.Title + "|" +
+			strings.ReplaceAll(doc.Content, "\n", " ") + "|" +
+			strconv.Itoa(doc.Length) + "|" +
+			strconv.FormatFloat(doc.PageRank, 'f', 6, 64) + "\n"
 		docsFile.WriteString(line)
-	}
+		return true
+	})
 }
 
 func (idx *Indexer) stemWord(word string) string {
@@ -253,8 +277,8 @@ func (idx *Indexer) stemWord(word string) string {
 
 func LoadIndex() *InvertedIndex {
 	index := &InvertedIndex{
-		Terms: make(map[string][]TermFreq),
-		Docs:  make(map[string]Document),
+		Terms: &sync.Map{},
+		Docs:  &sync.Map{},
 	}
 
 	termsFile, err := os.Open("data/terms.dat")
@@ -272,10 +296,18 @@ func LoadIndex() *InvertedIndex {
 			url := parts[1]
 			score, _ := strconv.ParseFloat(parts[2], 64)
 
-			index.Terms[term] = append(index.Terms[term], TermFreq{
+			termFreq := TermFreq{
 				URL:   url,
 				Score: score,
-			})
+			}
+
+			if existing, exists := index.Terms.Load(term); exists {
+				termFreqs := existing.([]TermFreq)
+				termFreqs = append(termFreqs, termFreq)
+				index.Terms.Store(term, termFreqs)
+			} else {
+				index.Terms.Store(term, []TermFreq{termFreq})
+			}
 		}
 	}
 
@@ -296,28 +328,28 @@ func LoadIndex() *InvertedIndex {
 			length, _ := strconv.Atoi(parts[3])
 			pageRank, _ := strconv.ParseFloat(parts[4], 64)
 
-			index.Docs[url] = Document{
+			index.Docs.Store(url, Document{
 				URL:      url,
 				Title:    title,
 				Content:  content,
 				Length:   length,
 				PageRank: pageRank,
-			}
+			})
 		}
 	}
 
 	return index
 }
 
-func loadIndexerStopWords() map[string]bool {
-	stopWords := make(map[string]bool)
+func loadIndexerStopWords() map[string]struct{} {
+	stopWords := make(map[string]struct{})
 
 	file, err := os.Open("data/stopwords.txt")
 	if err != nil {
-		return map[string]bool{
-			"the": true, "a": true, "an": true, "and": true, "or": true, "but": true,
-			"in": true, "on": true, "at": true, "to": true, "for": true, "of": true,
-			"with": true, "by": true,
+		return map[string]struct{}{
+			"the": {}, "a": {}, "an": {}, "and": {}, "or": {}, "but": {},
+			"in": {}, "on": {}, "at": {}, "to": {}, "for": {}, "of": {},
+			"with": {}, "by": {},
 		}
 	}
 	defer file.Close()
@@ -326,9 +358,42 @@ func loadIndexerStopWords() map[string]bool {
 	for scanner.Scan() {
 		word := strings.TrimSpace(strings.ToLower(scanner.Text()))
 		if word != "" {
-			stopWords[word] = true
+			stopWords[word] = struct{}{}
 		}
 	}
 
 	return stopWords
+}
+
+func (idx *Indexer) AddDocument(doc Document) {
+	idx.index.Docs.Store(doc.URL, doc)
+
+	tokens := idx.tokenize(doc.Title + " " + doc.Content)
+
+	for _, token := range tokens {
+		if _, isStop := idx.stopWords[token]; !isStop && len(token) > 2 {
+			var termFreqs []TermFreq
+			if existing, ok := idx.index.Terms.Load(token); ok {
+				termFreqs = existing.([]TermFreq)
+			}
+
+			found := false
+			for i := range termFreqs {
+				if termFreqs[i].URL == doc.URL {
+					termFreqs[i].Score += 1.0
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				termFreqs = append(termFreqs, TermFreq{
+					URL:   doc.URL,
+					Score: 1.0,
+				})
+			}
+
+			idx.index.Terms.Store(token, termFreqs)
+		}
+	}
 }

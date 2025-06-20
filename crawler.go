@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -93,10 +92,7 @@ func (c *ContentCrawler) GetQualitySeeds(query string) []SeedURL {
 		return seeds
 	}
 
-	log.Printf("Getting seeds for query: %s", query)
-
 	intent := c.classifyQueryIntent(normalizedQuery)
-	log.Printf("Classified query '%s' as intent: %s", query, intent)
 
 	switch intent {
 	case "definition":
@@ -125,7 +121,6 @@ func (c *ContentCrawler) GetQualitySeeds(query string) []SeedURL {
 		seeds = seeds[:15]
 	}
 
-	log.Printf("Generated %d quality seeds for query: %s", len(seeds), query)
 	return seeds
 }
 
@@ -348,7 +343,6 @@ func (c *ContentCrawler) CrawlContent(seeds []SeedURL) []CrawledDocument {
 				mu.Lock()
 				documents = append(documents, *doc)
 				mu.Unlock()
-				log.Printf("Successfully crawled quality content from: %s (quality: %.2f)", s.URL, doc.Quality)
 			}
 		}(seed)
 	}
@@ -370,38 +364,30 @@ func (c *ContentCrawler) crawlSinglePage(seed SeedURL) *CrawledDocument {
 	c.visited[seed.URL] = true
 	c.mutex.Unlock()
 
-	log.Printf("Crawling: %s", seed.URL)
-
 	resp, err := c.client.Get(seed.URL)
 	if err != nil {
-		log.Printf("Error fetching %s: %v", seed.URL, err)
 		return nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		log.Printf("Non-200 status for %s: %d", seed.URL, resp.StatusCode)
 		return nil
 	}
 
 	if !c.isValidContentType(resp.Header.Get("Content-Type")) {
-		log.Printf("Invalid content type for %s: %s", seed.URL, resp.Header.Get("Content-Type"))
 		return nil
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Error reading body for %s: %v", seed.URL, err)
 		return nil
 	}
 
 	html := string(body)
-	log.Printf("Received HTML content length: %d bytes for %s", len(html), seed.URL)
 
 	if strings.Contains(seed.URL, "wikipedia.org") && strings.Contains(seed.URL, "Special:Search") {
 		articleURL := c.extractWikipediaArticleFromSearch(html, seed.Topic)
 		if articleURL != "" {
-			log.Printf("Found actual Wikipedia article: %s", articleURL)
 			newSeed := SeedURL{
 				URL:         articleURL,
 				Priority:    seed.Priority,
@@ -414,24 +400,19 @@ func (c *ContentCrawler) crawlSinglePage(seed SeedURL) *CrawledDocument {
 	}
 
 	content := c.extractMainContent(html)
-	log.Printf("Main content extraction returned %d characters", len(content))
 	if content == "" {
 		content = c.extractCleanContent(html)
-		log.Printf("Clean content extraction returned %d characters", len(content))
 	}
 
 	if len(content) < 100 {
 		content = c.extractParagraphContent(html)
-		log.Printf("Paragraph content extraction returned %d characters", len(content))
 	}
 
 	if len(content) < 100 {
 		content = c.extractSimpleTextContent(html)
-		log.Printf("Simple text extraction returned %d characters", len(content))
 	}
 
 	if len(content) < 100 {
-		log.Printf("Content too short for %s: %d characters", seed.URL, len(content))
 		return nil
 	}
 
@@ -454,9 +435,6 @@ func (c *ContentCrawler) crawlSinglePage(seed SeedURL) *CrawledDocument {
 		Size:        len(content),
 		Domain:      domain,
 	}
-
-	log.Printf("Created document for %s: title='%s', content_length=%d, word_count=%d",
-		seed.URL, doc.Title, len(doc.Content), len(strings.Fields(doc.Content)))
 
 	return doc
 }
@@ -517,8 +495,6 @@ func (c *ContentCrawler) extractParagraphContent(html string) string {
 	paragraphRegex := regexp.MustCompile(`<p[^>]*>(.*?)</p>`)
 	matches := paragraphRegex.FindAllStringSubmatch(html, -1)
 
-	log.Printf("Found %d paragraph matches", len(matches))
-
 	var paragraphs []string
 	for i, match := range matches {
 		if len(match) > 1 {
@@ -529,14 +505,12 @@ func (c *ContentCrawler) extractParagraphContent(html string) string {
 			if len(p) > 50 {
 				paragraphs = append(paragraphs, p)
 				if i < 3 {
-					log.Printf("Sample paragraph %d: %.100s...", i+1, p)
 				}
 			}
 		}
 	}
 
 	content := strings.Join(paragraphs, "\n\n")
-	log.Printf("Extracted %d paragraphs, total length: %d", len(paragraphs), len(content))
 	return c.removeNavigationText(content)
 }
 
@@ -697,23 +671,19 @@ func (c *ContentCrawler) removeNavigationText(content string) string {
 
 func (c *ContentCrawler) isQualityContent(doc *CrawledDocument) bool {
 	if doc == nil {
-		log.Printf("Quality check failed: document is nil")
 		return false
 	}
 
 	if len(doc.Content) < 200 {
-		log.Printf("Quality check failed for %s: content too short (%d chars)", doc.URL, len(doc.Content))
 		return false
 	}
 
 	if len(doc.Title) < 5 {
-		log.Printf("Quality check failed for %s: title too short ('%s')", doc.URL, doc.Title)
 		return false
 	}
 
 	wordCount := len(strings.Fields(doc.Content))
 	if wordCount < 50 {
-		log.Printf("Quality check failed for %s: too few words (%d)", doc.URL, wordCount)
 		return false
 	}
 
@@ -725,7 +695,6 @@ func (c *ContentCrawler) isQualityContent(doc *CrawledDocument) bool {
 	}
 
 	if avgWordLength < 3.0 || avgWordLength > maxAvgWordLength {
-		log.Printf("Quality check failed for %s: suspicious average word length (%.2f, max: %.2f)", doc.URL, avgWordLength, maxAvgWordLength)
 		return false
 	}
 
@@ -789,25 +758,21 @@ func (c *ContentCrawler) isQualityContent(doc *CrawledDocument) bool {
 
 	for _, indicator := range emptySearchIndicators {
 		if strings.Contains(contentLower, indicator) {
-			log.Printf("Filtering out empty search page: %s (contains: %s)", doc.URL, indicator)
 			return false
 		}
 	}
 
 	if strings.Contains(doc.URL, "nationalgeographic.com") || strings.Contains(doc.URL, "britannica.com") {
 		if strings.Contains(contentLower, "search results") && wordCount < 150 {
-			log.Printf("Filtering out thin search results page: %s", doc.URL)
 			return false
 		}
 		if strings.Contains(titleLower, "search") && !strings.Contains(contentLower, "encyclopedia") {
-			log.Printf("Filtering out search page without content: %s", doc.URL)
 			return false
 		}
 	}
 
 	if strings.Contains(doc.URL, "search") || strings.Contains(titleLower, "search") {
 		if wordCount < 100 || len(doc.Content) < 500 {
-			log.Printf("Filtering out thin search page: %s (words: %d, chars: %d)", doc.URL, wordCount, len(doc.Content))
 			return false
 		}
 	}
@@ -1030,7 +995,6 @@ func (c *ContentCrawler) extractEntityFromQuestion(query string) string {
 			}
 
 			if c.isValidEntity(entity) {
-				log.Printf("Extracted entity '%s' from question: %s", entity, query)
 				return entity
 			}
 		}

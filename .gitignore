@@ -1,6 +1,7 @@
 *.gob
 soulsearch
 exsearch
+crawler-client
 /tmp/soulsearch.sock
 /tmp/exsearch.sock
 *.sock
@@ -14,3 +15,9 @@ frontend/npm-debug.log*
 frontend/yarn-debug.log*
 frontend/yarn-error.log*
 server.log
+*.log
+*.backup
+*.bak
+*~
+.DS_Store
+*.tmp

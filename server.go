@@ -3,11 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -71,16 +70,10 @@ func (s *Server) Start() {
 	http.Handle("/static/", fs)
 	http.HandleFunc("/", s.spaHandler(fs))
 
-	fmt.Printf("Starting SoulSearch server on http://localhost:%d...\n", s.port)
-	log.Printf("Starting SoulSearch HTTP server on port %d", s.port)
-
-	fmt.Printf("SoulSearch server running on http://localhost:%d\n", s.port)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", s.port), nil))
+	http.ListenAndServe(":8080", nil)
 }
 
 func (s *Server) handleSuggestions(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Received suggestions request: %s %s", r.Method, r.URL.Path)
-
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -101,7 +94,6 @@ func (s *Server) handleSuggestions(w http.ResponseWriter, r *http.Request) {
 	} else {
 		var req SearchRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			log.Printf("Failed to decode JSON body: %v", err)
 			query = r.URL.Query().Get("q")
 		} else {
 			query = req.Query
@@ -115,20 +107,14 @@ func (s *Server) handleSuggestions(w http.ResponseWriter, r *http.Request) {
 
 	suggestions := s.engine.GetSuggestions(query)
 
-	log.Printf("Suggestions completed, found %d suggestions", len(suggestions))
-
 	response := map[string]interface{}{
 		"suggestions": suggestions,
 	}
-
-	log.Printf("Sending response with %d suggestions", len(suggestions))
 
 	json.NewEncoder(w).Encode(response)
 }
 
 func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Received dynamic search request: %s %s", r.Method, r.URL.Path)
-
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -149,14 +135,11 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Starting search for query: '%s'", query)
 	startTime := time.Now()
 
 	existingResults, total, timeTaken := s.engine.SearchPaginated(query, 1, 10)
 
 	if s.hasAuthoritativeResults(existingResults) {
-		log.Printf("Found authoritative results in existing index, returning immediately")
-
 		for i := range existingResults {
 			if existingResults[i].Snippet == "" {
 				existingResults[i].Snippet = s.generateSimpleSnippet(existingResults[i].URL, query)
@@ -174,8 +157,6 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("No authoritative results found, starting real-time crawling for query: '%s'", query)
-
 	timeout := 25 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -187,15 +168,12 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 		defer close(done)
 		crawler := CreateContentCrawler()
 		seeds := crawler.GetQualitySeeds(query)
-		log.Printf("Generated %d seeds for crawling", len(seeds))
 		crawledDocs = crawler.CrawlContent(seeds)
-		log.Printf("Crawled %d documents", len(crawledDocs))
 	}()
 
 	select {
 	case <-done:
 	case <-ctx.Done():
-		log.Printf("Crawling timed out after %v", timeout)
 		response := SearchResponse{
 			Results:    []SearchResult{},
 			Total:      0,
@@ -206,8 +184,6 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(response)
 		return
 	}
-
-	log.Printf("Crawled %d documents", len(crawledDocs))
 
 	var pages []Page
 	for _, doc := range crawledDocs {
@@ -221,7 +197,6 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(pages) == 0 {
-		log.Printf("No pages crawled, returning empty results")
 		response := SearchResponse{
 			Results:    []SearchResult{},
 			Total:      0,
@@ -243,8 +218,6 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("Dynamic search completed in %s, found %d results", time.Since(startTime).String(), len(results))
-
 	response := SearchResponse{
 		Results:    results,
 		Total:      total,
@@ -258,8 +231,8 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) indexPages(pages []Page) *InvertedIndex {
 	index := &InvertedIndex{
-		Terms: make(map[string][]TermFreq),
-		Docs:  make(map[string]Document),
+		Terms: &sync.Map{},
+		Docs:  &sync.Map{},
 	}
 
 	stopWords := loadStopWords()
@@ -273,7 +246,7 @@ func (s *Server) indexPages(pages []Page) *InvertedIndex {
 			PageRank: 1.0,
 		}
 
-		index.Docs[page.URL] = doc
+		index.Docs.Store(page.URL, doc)
 
 		allText := page.Title + " " + page.Content
 		words := tokenize(allText)
@@ -292,10 +265,18 @@ func (s *Server) indexPages(pages []Page) *InvertedIndex {
 				score *= 2.0
 			}
 
-			index.Terms[term] = append(index.Terms[term], TermFreq{
+			termFreq := TermFreq{
 				URL:   page.URL,
 				Score: score,
-			})
+			}
+
+			if existing, exists := index.Terms.Load(term); exists {
+				termFreqs := existing.([]TermFreq)
+				termFreqs = append(termFreqs, termFreq)
+				index.Terms.Store(term, termFreqs)
+			} else {
+				index.Terms.Store(term, []TermFreq{termFreq})
+			}
 		}
 	}
 
@@ -342,11 +323,12 @@ func (s *Server) generateSimpleSnippet(url, query string) string {
 	s.engine.mu.RLock()
 	defer s.engine.mu.RUnlock()
 
-	doc, exists := s.engine.index.Docs[url]
+	docInterface, exists := s.engine.index.Docs.Load(url)
 	if !exists {
 		return "No content available"
 	}
 
+	doc := docInterface.(Document)
 	content := doc.Content
 	if content == "" {
 		return "No content available"
@@ -449,9 +431,6 @@ func (s *Server) hasAuthoritativeResults(results []SearchResult) bool {
 func (s *Server) loadPersistedIndex() {
 	if index := s.loadIndexFromDisk(); index != nil {
 		s.engine.LoadIndex(index)
-		log.Printf("Loaded persisted index with %d documents", len(index.Docs))
-	} else {
-		log.Printf("No persisted index found, starting with empty index")
 	}
 }
 
@@ -459,8 +438,8 @@ func (s *Server) persistCrawledContent(pages []Page) {
 	currentIndex := s.engine.GetCurrentIndex()
 	if currentIndex == nil {
 		currentIndex = &InvertedIndex{
-			Terms: make(map[string][]TermFreq),
-			Docs:  make(map[string]Document),
+			Terms: &sync.Map{},
+			Docs:  &sync.Map{},
 		}
 	}
 
@@ -472,26 +451,33 @@ func (s *Server) persistCrawledContent(pages []Page) {
 }
 
 func (s *Server) mergeIndexes(existing, new *InvertedIndex) {
-	for url, doc := range new.Docs {
-		existing.Docs[url] = doc
-	}
+	new.Docs.Range(func(key, value interface{}) bool {
+		existing.Docs.Store(key, value)
+		return true
+	})
 
-	for term, termFreqs := range new.Terms {
-		if existingFreqs, exists := existing.Terms[term]; exists {
-			urlMap := make(map[string]bool)
+	new.Terms.Range(func(key, value interface{}) bool {
+		term := key.(string)
+		termFreqs := value.([]TermFreq)
+
+		if existingValue, exists := existing.Terms.Load(term); exists {
+			existingFreqs := existingValue.([]TermFreq)
+			urlMap := make(map[string]struct{})
 			for _, tf := range existingFreqs {
-				urlMap[tf.URL] = true
+				urlMap[tf.URL] = struct{}{}
 			}
 
 			for _, tf := range termFreqs {
-				if !urlMap[tf.URL] {
-					existing.Terms[term] = append(existing.Terms[term], tf)
+				if _, exists := urlMap[tf.URL]; !exists {
+					existingFreqs = append(existingFreqs, tf)
 				}
 			}
+			existing.Terms.Store(term, existingFreqs)
 		} else {
-			existing.Terms[term] = termFreqs
+			existing.Terms.Store(term, termFreqs)
 		}
-	}
+		return true
+	})
 }
 
 func (s *Server) saveIndexToDisk(index *InvertedIndex) error {
@@ -505,7 +491,13 @@ func (s *Server) saveIndexToDisk(index *InvertedIndex) error {
 	}
 	defer docsFile.Close()
 
-	if err := json.NewEncoder(docsFile).Encode(index.Docs); err != nil {
+	docs := make(map[string]Document)
+	index.Docs.Range(func(key, value interface{}) bool {
+		docs[key.(string)] = value.(Document)
+		return true
+	})
+
+	if err := json.NewEncoder(docsFile).Encode(docs); err != nil {
 		return err
 	}
 
@@ -515,11 +507,16 @@ func (s *Server) saveIndexToDisk(index *InvertedIndex) error {
 	}
 	defer termsFile.Close()
 
-	if err := json.NewEncoder(termsFile).Encode(index.Terms); err != nil {
+	terms := make(map[string][]TermFreq)
+	index.Terms.Range(func(key, value interface{}) bool {
+		terms[key.(string)] = value.([]TermFreq)
+		return true
+	})
+
+	if err := json.NewEncoder(termsFile).Encode(terms); err != nil {
 		return err
 	}
 
-	log.Printf("Persisted index with %d documents and %d terms", len(index.Docs), len(index.Terms))
 	return nil
 }
 
@@ -546,8 +543,18 @@ func (s *Server) loadIndexFromDisk() *InvertedIndex {
 		return nil
 	}
 
-	return &InvertedIndex{
-		Terms: terms,
-		Docs:  docs,
+	index := &InvertedIndex{
+		Terms: &sync.Map{},
+		Docs:  &sync.Map{},
 	}
+
+	for url, doc := range docs {
+		index.Docs.Store(url, doc)
+	}
+
+	for term, termFreqs := range terms {
+		index.Terms.Store(term, termFreqs)
+	}
+
+	return index
 }

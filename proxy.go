@@ -2,7 +2,6 @@ package main
 
 import (
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -22,9 +21,7 @@ func CreateProxy(port int, socketPath string) *Proxy {
 
 func (p *Proxy) Start() {
 	http.HandleFunc("/", p.proxyHandler)
-
-	log.Printf("HTTP proxy running on port %d, forwarding to Unix socket: %s", p.port, p.socketPath)
-	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(p.port), nil))
+	http.ListenAndServe(":"+strconv.Itoa(p.port), nil)
 }
 
 func (p *Proxy) proxyHandler(w http.ResponseWriter, r *http.Request) {

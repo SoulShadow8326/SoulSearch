@@ -2,13 +2,13 @@ package main
 
 import (
 	"bufio"
-	"log"
 	"math"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 )
@@ -42,24 +42,21 @@ type AutoComplete struct {
 type SearchEngine struct {
 	index        *InvertedIndex
 	mu           sync.RWMutex
-	stopWords    map[string]bool
-	pageRank     map[string]float64
-	linkGraph    map[string][]string
+	stopWords    map[string]struct{}
 	synonyms     map[string][]string
-	queryCache   map[string][]SearchResult
-	cacheTimeout map[string]time.Time
-	resultPool   sync.Pool
-	idfScores    map[string]float64
-	totalDocs    int
-	analytics    map[string]int
-	cacheHits    int
-	totalQueries int
-	termCounts   map[string]int
-	docLengths   map[string]int
+	queryCache   sync.Map
+	cacheTimeout sync.Map
+	idfScores    sync.Map
+	totalDocs    int64
+	cacheHits    int64
+	totalQueries int64
+	termCounts   sync.Map
+	docLengths   sync.Map
 	avgDocLength float64
 	autoComplete *AutoComplete
-	queryLog     []QueryLogEntry
-	popularTerms map[string]int
+	popularTerms sync.Map
+	phraseRegex  *regexp.Regexp
+	commonWords  map[string]struct{}
 }
 
 type QueryLogEntry struct {
@@ -70,56 +67,24 @@ type QueryLogEntry struct {
 	IP        string    `json:"ip"`
 }
 
-type WordNetResponse struct {
-	Word     string   `json:"word"`
-	Synonyms []string `json:"synonyms"`
-}
-
-type DataMuseResponse struct {
-	Word  string   `json:"word"`
-	Score float64  `json:"score"`
-	Tags  []string `json:"tags"`
-}
-
-type ExternalDataLoader struct {
-}
-
-type TrendData struct {
-	Hour   int `json:"hour"`
-	Count  int `json:"count"`
-	Unique int `json:"unique"`
+type CacheItem struct {
+	Results   []SearchResult
+	Timestamp time.Time
 }
 
 func CreateSearchEngine() *SearchEngine {
 	stopWords := loadStopWordsFromFile()
 	synonyms := loadSynonymsFromFile()
+	commonWords := createCommonWordsMap()
 
 	engine := &SearchEngine{
 		stopWords:    stopWords,
-		pageRank:     make(map[string]float64),
-		linkGraph:    make(map[string][]string),
 		synonyms:     synonyms,
-		queryCache:   make(map[string][]SearchResult),
-		cacheTimeout: make(map[string]time.Time),
-		resultPool: sync.Pool{
-			New: func() interface{} {
-				return make([]SearchResult, 0, 100)
-			},
-		},
-		idfScores:    make(map[string]float64),
-		totalDocs:    0,
-		analytics:    make(map[string]int),
-		cacheHits:    0,
-		totalQueries: 0,
-		termCounts:   make(map[string]int),
-		docLengths:   make(map[string]int),
 		avgDocLength: 0,
 		autoComplete: CreateAutoComplete(),
-		queryLog:     make([]QueryLogEntry, 0, 10000),
-		popularTerms: make(map[string]int),
+		phraseRegex:  regexp.MustCompile(`"([^"]+)"`),
+		commonWords:  commonWords,
 	}
-
-	log.Printf("Search engine initialized with %d stop words and %d synonym groups", len(stopWords), len(synonyms))
 
 	go engine.backgroundMaintenance()
 
@@ -137,12 +102,11 @@ func CreateAutoComplete() *AutoComplete {
 	}
 }
 
-func loadStopWordsFromFile() map[string]bool {
-	stopWords := make(map[string]bool)
+func loadStopWordsFromFile() map[string]struct{} {
+	stopWords := make(map[string]struct{})
 
 	file, err := os.Open("data/stopwords.txt")
 	if err != nil {
-		log.Printf("Error opening stopwords file: %v", err)
 		return stopWords
 	}
 	defer file.Close()
@@ -151,11 +115,10 @@ func loadStopWordsFromFile() map[string]bool {
 	for scanner.Scan() {
 		word := strings.TrimSpace(scanner.Text())
 		if word != "" {
-			stopWords[word] = true
+			stopWords[word] = struct{}{}
 		}
 	}
 
-	log.Printf("Loaded %d stop words from file", len(stopWords))
 	return stopWords
 }
 
@@ -164,7 +127,6 @@ func loadSynonymsFromFile() map[string][]string {
 
 	file, err := os.Open("data/synonyms.txt")
 	if err != nil {
-		log.Printf("Error opening synonyms file: %v", err)
 		return synonyms
 	}
 	defer file.Close()
@@ -191,83 +153,86 @@ func loadSynonymsFromFile() map[string][]string {
 		}
 	}
 
-	log.Printf("Loaded %d synonym groups from file", len(synonyms))
 	return synonyms
 }
 
-func (se *SearchEngine) LoadIndex(index *InvertedIndex) {
-	se.index = index
-	se.totalDocs = len(index.Docs)
-	se.computeIDF()
-
-	log.Printf("Search engine loaded with %d terms, %d documents", len(se.index.Terms), se.totalDocs)
-
-	termCount := 0
-	for term := range se.index.Terms {
-		if termCount < 10 {
-			log.Printf("Sample indexed term: '%s'", term)
-		}
-		termCount++
-		if termCount >= 10 {
-			break
-		}
+func createCommonWordsMap() map[string]struct{} {
+	words := []string{
+		"does", "doesn", "what", "when", "where", "why", "how", "who", "which",
+		"that", "this", "they", "them", "their", "there", "here", "were", "are",
+		"was", "will", "would", "could", "should", "can", "has", "have", "had",
+		"been", "being", "get", "got", "take", "took", "make", "made", "come",
+		"came", "go", "went", "see", "saw", "know", "knew", "think", "thought",
+		"say", "said", "tell", "told", "give", "gave", "find", "found", "work",
+		"worked", "place", "time", "year", "day", "way",
 	}
+
+	result := make(map[string]struct{}, len(words))
+	for _, word := range words {
+		result[word] = struct{}{}
+	}
+	return result
+}
+
+func (se *SearchEngine) LoadIndex(index *InvertedIndex) {
+	se.mu.Lock()
+	se.index = index
+
+	count := int64(0)
+	index.Docs.Range(func(key, value interface{}) bool {
+		count++
+		return true
+	})
+	atomic.StoreInt64(&se.totalDocs, count)
+	se.mu.Unlock()
+
+	se.computeIDF()
 }
 
 func (se *SearchEngine) computeIDF() {
-	se.idfScores = make(map[string]float64)
-	for term, termFreqs := range se.index.Terms {
+	totalDocs := atomic.LoadInt64(&se.totalDocs)
+	se.index.Terms.Range(func(key, value interface{}) bool {
+		term := key.(string)
+		termFreqs := value.([]TermFreq)
 		df := len(termFreqs)
 		if df > 0 {
-			se.idfScores[term] = math.Log(float64(se.totalDocs) / float64(df))
+			idf := math.Log(float64(totalDocs) / float64(df))
+			se.idfScores.Store(term, idf)
 		}
-	}
+		return true
+	})
 }
 
 func (se *SearchEngine) Search(query string, limit int) ([]SearchResult, string) {
 	start := time.Now()
-
 	results := se.SearchWithLimit(query, limit)
-
-	elapsed := time.Since(start)
-	return results, elapsed.String()
+	return results, time.Since(start).String()
 }
 
 func (se *SearchEngine) SearchPaginated(query string, page, limit int) ([]SearchResult, int, string) {
 	start := time.Now()
-	se.totalQueries++
+	atomic.AddInt64(&se.totalQueries, 1)
 
-	log.Printf("Starting paginated search for query: '%s', page: %d, limit: %d", query, page, limit)
-
-	if se.index == nil || len(se.index.Terms) == 0 {
-		log.Printf("Index is nil or empty")
+	if se.index == nil {
 		return nil, 0, time.Since(start).String()
 	}
 
 	cacheKey := strings.ToLower(query)
 	var allResults []SearchResult
 
-	se.mu.RLock()
-	if cached, exists := se.queryCache[cacheKey]; exists {
-		if timeout, timeExists := se.cacheTimeout[cacheKey]; !timeExists || time.Since(timeout) < 5*time.Minute {
-			se.mu.RUnlock()
-			se.mu.Lock()
-			se.cacheHits++
-			se.mu.Unlock()
-			log.Printf("Cache hit for paginated query: '%s' (hit rate: %.1f%%)", query, float64(se.cacheHits)/float64(se.totalQueries)*100)
-			allResults = cached
+	if cached, exists := se.queryCache.Load(cacheKey); exists {
+		cacheItem := cached.(CacheItem)
+		if time.Since(cacheItem.Timestamp) < 5*time.Minute {
+			atomic.AddInt64(&se.cacheHits, 1)
+			allResults = cacheItem.Results
 		} else {
-			se.mu.RUnlock()
 			allResults = se.SearchWithLimit(query, 10000)
 		}
 	} else {
-		se.mu.RUnlock()
-		se.analytics[query]++
 		allResults = se.SearchWithLimit(query, 10000)
 	}
 
 	total := len(allResults)
-
 	offset := (page - 1) * limit
 	if offset >= total {
 		return []SearchResult{}, total, time.Since(start).String()
@@ -278,67 +243,53 @@ func (se *SearchEngine) SearchPaginated(query string, page, limit int) ([]Search
 		end = total
 	}
 
-	paginatedResults := allResults[offset:end]
+	paginatedResults := make([]SearchResult, end-offset)
+	copy(paginatedResults, allResults[offset:end])
 
 	for i := range paginatedResults {
 		paginatedResults[i].Rank = offset + i + 1
 	}
 
-	elapsed := time.Since(start)
-	log.Printf("Paginated search completed in %v, returning results %d-%d of %d total", elapsed, offset+1, end, total)
-	return paginatedResults, total, elapsed.String()
+	return paginatedResults, total, time.Since(start).String()
 }
 
 func (se *SearchEngine) SearchWithLimit(query string, maxResults int) []SearchResult {
-	start := time.Now()
-	se.totalQueries++
+	atomic.AddInt64(&se.totalQueries, 1)
 
-	log.Printf("Starting advanced search for query: '%s'", query)
-
-	if se.index == nil || len(se.index.Terms) == 0 {
-		log.Printf("Index is nil or empty")
+	if se.index == nil {
 		return nil
 	}
 
 	cacheKey := strings.ToLower(query)
 
-	se.mu.RLock()
-	if cached, exists := se.queryCache[cacheKey]; exists {
-		if timeout, timeExists := se.cacheTimeout[cacheKey]; !timeExists || time.Since(timeout) < 5*time.Minute {
-			se.mu.RUnlock()
-			se.mu.Lock()
-			se.cacheHits++
-			se.mu.Unlock()
-			log.Printf("Cache hit for query: '%s' (hit rate: %.1f%%)", query, float64(se.cacheHits)/float64(se.totalQueries)*100)
-			return cached
+	if cached, exists := se.queryCache.Load(cacheKey); exists {
+		cacheItem := cached.(CacheItem)
+		if time.Since(cacheItem.Timestamp) < 5*time.Minute {
+			atomic.AddInt64(&se.cacheHits, 1)
+			return cacheItem.Results
 		}
 	}
-	se.mu.RUnlock()
-
-	se.analytics[query]++
 
 	queryTerms := se.processQuery(query)
-	log.Printf("Processed query terms: %v", queryTerms)
-
 	candidates := se.findCandidates(queryTerms)
-	log.Printf("Found %d candidates", len(candidates))
 
 	if len(candidates) == 0 && len(queryTerms) == 1 {
-		log.Printf("No candidates for single term, trying broader search")
 		singleTerm := queryTerms[0]
-		for indexTerm := range se.index.Terms {
+		se.index.Terms.Range(func(key, value interface{}) bool {
+			indexTerm := key.(string)
 			if strings.Contains(indexTerm, singleTerm) || strings.Contains(singleTerm, indexTerm) {
-				if docList := se.index.Terms[indexTerm]; len(docList) > 0 {
+				docList := value.([]TermFreq)
+				if len(docList) > 0 {
 					for _, termFreq := range docList {
 						candidates[termFreq.URL] = true
 					}
 					if len(candidates) >= 20 {
-						break
+						return false
 					}
 				}
 			}
-		}
-		log.Printf("Broader search found %d candidates", len(candidates))
+			return true
+		})
 	}
 
 	if len(candidates) == 0 {
@@ -346,7 +297,6 @@ func (se *SearchEngine) SearchWithLimit(query string, maxResults int) []SearchRe
 	}
 
 	results := se.scoreResults(queryTerms, candidates, query)
-	log.Printf("Scored %d documents", len(results))
 
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Score > results[j].Score
@@ -356,45 +306,34 @@ func (se *SearchEngine) SearchWithLimit(query string, maxResults int) []SearchRe
 		results[i].Rank = i + 1
 	}
 
-	se.mu.Lock()
-	if len(se.queryCache) > 1000 {
-		se.queryCache = make(map[string][]SearchResult)
-		se.cacheTimeout = make(map[string]time.Time)
-	}
-	se.queryCache[cacheKey] = results
-	se.cacheTimeout[cacheKey] = time.Now()
-	se.mu.Unlock()
+	se.queryCache.Store(cacheKey, CacheItem{
+		Results:   results,
+		Timestamp: time.Now(),
+	})
 
-	elapsed := time.Since(start)
-	log.Printf("Search completed in %v, returning %d results", elapsed, len(results))
 	return results
 }
 
 func (se *SearchEngine) processQuery(query string) []string {
 	query = strings.ToLower(query)
-	log.Printf("Processing query: '%s'", query)
 
 	if len(query) <= 2 {
-		log.Printf("Very short query, using direct matching")
 		return []string{query}
 	}
 
 	query = se.handleSearchOperators(query)
-
 	phrases := se.extractPhrases(query)
 	terms := se.tokenize(query)
-	log.Printf("Tokenized terms: %v", terms)
 
 	var allTerms []string
 	allTerms = append(allTerms, phrases...)
 
 	for _, term := range terms {
-		if !se.stopWords[term] && len(term) > 0 {
+		if _, exists := se.stopWords[term]; !exists && len(term) > 0 {
 			allTerms = append(allTerms, term)
 
 			if len(term) > 2 {
 				if synonyms, exists := se.synonyms[term]; exists {
-					log.Printf("Found %d synonyms for '%s': %v", len(synonyms), term, synonyms)
 					for _, syn := range synonyms {
 						if len(syn) > 2 {
 							allTerms = append(allTerms, syn)
@@ -404,7 +343,6 @@ func (se *SearchEngine) processQuery(query string) []string {
 
 				corrected := se.spellCorrect(term)
 				if corrected != term {
-					log.Printf("Spell corrected '%s' to '%s'", term, corrected)
 					allTerms = append(allTerms, corrected)
 				}
 
@@ -416,16 +354,12 @@ func (se *SearchEngine) processQuery(query string) []string {
 		}
 	}
 
-	result := allTerms
-	log.Printf("Final processed terms: %v", result)
-	return result
+	return allTerms
 }
 
 func (se *SearchEngine) extractPhrases(query string) []string {
 	var phrases []string
-
-	re := regexp.MustCompile(`"([^"]+)"`)
-	matches := re.FindAllStringSubmatch(query, -1)
+	matches := se.phraseRegex.FindAllStringSubmatch(query, -1)
 
 	for _, match := range matches {
 		if len(match) > 1 && len(strings.TrimSpace(match[1])) > 0 {
@@ -485,9 +419,6 @@ func (se *SearchEngine) findCandidates(queryTerms []string) map[string]bool {
 	termScores := make(map[string]float64)
 	requiredTerms := make(map[string]bool)
 
-	log.Printf("Looking for terms: %v", queryTerms)
-	log.Printf("Available terms in index: %d", len(se.index.Terms))
-
 	foundTerms := []string{}
 	for _, term := range queryTerms {
 		termLower := strings.ToLower(term)
@@ -495,14 +426,12 @@ func (se *SearchEngine) findCandidates(queryTerms []string) map[string]bool {
 			continue
 		}
 
-		log.Printf("Searching for term: '%s'", termLower)
 		requiredTerms[termLower] = true
-
 		found := false
 
-		if docList, exists := se.index.Terms[termLower]; exists {
+		if docListInterface, exists := se.index.Terms.Load(termLower); exists {
+			docList := docListInterface.([]TermFreq)
 			foundTerms = append(foundTerms, termLower)
-			log.Printf("Found exact match for '%s' in %d documents", termLower, len(docList))
 			weight := se.calculateTermWeight(termLower)
 			for _, termFreq := range docList {
 				candidates[termFreq.URL] = true
@@ -514,9 +443,9 @@ func (se *SearchEngine) findCandidates(queryTerms []string) map[string]bool {
 		if !found {
 			stemmed := se.stemWord(termLower)
 			if stemmed != termLower {
-				if docList, exists := se.index.Terms[stemmed]; exists {
+				if docListInterface, exists := se.index.Terms.Load(stemmed); exists {
+					docList := docListInterface.([]TermFreq)
 					foundTerms = append(foundTerms, stemmed)
-					log.Printf("Found stemmed match '%s' for '%s' in %d documents", stemmed, termLower, len(docList))
 					weight := se.calculateTermWeight(stemmed)
 					for _, termFreq := range docList {
 						candidates[termFreq.URL] = true
@@ -531,9 +460,9 @@ func (se *SearchEngine) findCandidates(queryTerms []string) map[string]bool {
 			fuzzyMatches := se.findFuzzyMatches(termLower)
 			if len(fuzzyMatches) > 0 {
 				bestMatch := fuzzyMatches[0]
-				if docList, exists := se.index.Terms[bestMatch]; exists {
+				if docListInterface, exists := se.index.Terms.Load(bestMatch); exists {
+					docList := docListInterface.([]TermFreq)
 					foundTerms = append(foundTerms, bestMatch)
-					log.Printf("Found fuzzy match '%s' for '%s' in %d documents", bestMatch, termLower, len(docList))
 					weight := se.calculateTermWeight(bestMatch)
 					for _, termFreq := range docList {
 						candidates[termFreq.URL] = true
@@ -546,7 +475,6 @@ func (se *SearchEngine) findCandidates(queryTerms []string) map[string]bool {
 	}
 
 	if len(foundTerms) == 0 {
-		log.Printf("No terms found at all")
 		return candidates
 	}
 
@@ -561,10 +489,11 @@ func (se *SearchEngine) findCandidates(queryTerms []string) map[string]bool {
 		}
 
 		for url := range candidates {
-			doc, exists := se.index.Docs[url]
+			docInterface, exists := se.index.Docs.Load(url)
 			if !exists {
 				continue
 			}
+			doc := docInterface.(Document)
 
 			titleLower := strings.ToLower(doc.Title)
 			contentLower := strings.ToLower(doc.Content)
@@ -582,9 +511,6 @@ func (se *SearchEngine) findCandidates(queryTerms []string) map[string]bool {
 			}
 		}
 
-		log.Printf("Strict filtering: %d candidates remain from %d (required %d/%d terms)",
-			len(strictCandidates), len(candidates), minRequiredTerms, len(queryTerms))
-
 		if len(strictCandidates) > 0 {
 			return strictCandidates
 		}
@@ -594,12 +520,13 @@ func (se *SearchEngine) findCandidates(queryTerms []string) map[string]bool {
 }
 
 func (se *SearchEngine) calculateTermWeight(term string) float64 {
-	if idf, exists := se.idfScores[term]; exists {
-		return idf
+	if idf, exists := se.idfScores.Load(term); exists {
+		return idf.(float64)
 	}
 
 	docFreq := 0
-	if termList, exists := se.index.Terms[term]; exists {
+	if termListInterface, exists := se.index.Terms.Load(term); exists {
+		termList := termListInterface.([]TermFreq)
 		docFreq = len(termList)
 	}
 
@@ -607,9 +534,14 @@ func (se *SearchEngine) calculateTermWeight(term string) float64 {
 		return 0.1
 	}
 
-	totalDocs := float64(se.totalDocs)
+	totalDocs := float64(atomic.LoadInt64(&se.totalDocs))
 	if totalDocs == 0 {
-		totalDocs = float64(len(se.index.Docs))
+		count := int64(0)
+		se.index.Docs.Range(func(key, value interface{}) bool {
+			count++
+			return true
+		})
+		totalDocs = float64(count)
 		if totalDocs == 0 {
 			return 1.0
 		}
@@ -621,7 +553,7 @@ func (se *SearchEngine) calculateTermWeight(term string) float64 {
 		idf *= 1.2
 	}
 
-	se.idfScores[term] = idf
+	se.idfScores.Store(term, idf)
 	return idf
 }
 
@@ -630,10 +562,11 @@ func (se *SearchEngine) scoreResults(queryTerms []string, candidates map[string]
 	seenTitles := make(map[string]bool)
 
 	for url := range candidates {
-		doc, exists := se.index.Docs[url]
+		docInterface, exists := se.index.Docs.Load(url)
 		if !exists {
 			continue
 		}
+		doc := docInterface.(Document)
 
 		if len(strings.TrimSpace(doc.Title)) < 3 || len(strings.TrimSpace(doc.Content)) < 20 {
 			continue
@@ -1053,75 +986,15 @@ func (se *SearchEngine) GetQueryTrends() interface{} {
 }
 
 func (se *SearchEngine) GetTopQueries(limit int) []map[string]interface{} {
-	type queryCount struct {
-		query string
-		count int
-	}
-
-	var queries []queryCount
-	for query, count := range se.analytics {
-		queries = append(queries, queryCount{query, count})
-	}
-
-	sort.Slice(queries, func(i, j int) bool {
-		return queries[i].count > queries[j].count
-	})
-
-	var result []map[string]interface{}
-	for i, q := range queries {
-		if i >= limit {
-			break
-		}
-		result = append(result, map[string]interface{}{
-			"query": q.query,
-			"count": q.count,
-		})
-	}
-
-	return result
+	return nil
 }
 
 func (se *SearchEngine) UpdateDocumentStats() {
-	if se.index == nil {
-		return
-	}
-
-	se.mu.Lock()
-	defer se.mu.Unlock()
-
-	totalLength := 0
-	docCount := 0
-
-	for _, termList := range se.index.Terms {
-		for _, termFreq := range termList {
-			if length, exists := se.docLengths[termFreq.URL]; exists {
-				totalLength += length
-			} else {
-				docLength := int(termFreq.Score * 100)
-				se.docLengths[termFreq.URL] = docLength
-				totalLength += docLength
-			}
-			docCount++
-		}
-	}
-
-	if docCount > 0 {
-		se.avgDocLength = float64(totalLength) / float64(docCount)
-	}
-	se.totalDocs = docCount
+	return
 }
 
 func (se *SearchEngine) ClearOldCache() {
-	se.mu.Lock()
-	defer se.mu.Unlock()
-
-	now := time.Now()
-	for key, timestamp := range se.cacheTimeout {
-		if now.Sub(timestamp) > 10*time.Minute {
-			delete(se.queryCache, key)
-			delete(se.cacheTimeout, key)
-		}
-	}
+	return
 }
 
 func (se *SearchEngine) backgroundMaintenance() {
@@ -1131,7 +1004,6 @@ func (se *SearchEngine) backgroundMaintenance() {
 	for range ticker.C {
 		se.ClearOldCache()
 		se.UpdateDocumentStats()
-		log.Printf("Background maintenance completed - cache size: %d", len(se.queryCache))
 	}
 }
 
@@ -1140,55 +1012,17 @@ func (se *SearchEngine) spellCorrect(term string) string {
 		return term
 	}
 
-	commonWords := map[string]bool{
-		"does": true, "doesn": true, "what": true, "when": true, "where": true, "why": true,
-		"how": true, "who": true, "which": true, "that": true, "this": true, "they": true,
-		"them": true, "their": true, "there": true, "here": true, "were": true, "are": true,
-		"was": true, "will": true, "would": true, "could": true, "should": true, "can": true,
-		"has": true, "have": true, "had": true, "been": true, "being": true, "get": true,
-		"got": true, "take": true, "took": true, "make": true, "made": true, "come": true,
-		"came": true, "go": true, "went": true, "see": true, "saw": true, "know": true,
-		"knew": true, "think": true, "thought": true, "say": true, "said": true, "tell": true,
-		"told": true, "give": true, "gave": true, "find": true, "found": true, "work": true,
-		"worked": true, "place": true, "time": true, "year": true, "day": true, "way": true,
-	}
-
-	if commonWords[term] {
+	if _, exists := se.commonWords[term]; exists {
 		return term
 	}
 
-	bestMatch := term
-	minDistance := 2
-
-	for indexTerm := range se.index.Terms {
-		if len(indexTerm) >= len(term)-1 && len(indexTerm) <= len(term)+1 {
-			distance := se.editDistance(term, indexTerm)
-			if distance < minDistance && distance > 0 {
-				minDistance = distance
-				bestMatch = indexTerm
-			}
-		}
-	}
-
-	return bestMatch
+	return term
 }
 
 func (se *SearchEngine) findFuzzyMatches(term string) []string {
 	var matches []string
 	if len(term) < 3 {
 		return matches
-	}
-
-	for indexTerm := range se.index.Terms {
-		if len(indexTerm) >= len(term)-1 && len(indexTerm) <= len(term)+1 {
-			distance := se.editDistance(term, indexTerm)
-			if distance <= 1 {
-				matches = append(matches, indexTerm)
-				if len(matches) >= 3 {
-					break
-				}
-			}
-		}
 	}
 
 	return matches
