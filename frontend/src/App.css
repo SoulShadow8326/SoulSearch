@@ -60,22 +60,6 @@ body {
   display: none;
 }
 
-@keyframes devour {
-  0%, 100% { 
-    opacity: 0.4; 
-    transform: translate(-50%, -50%) scale(1); 
-  }
-  50% { 
-    opacity: 0.8; 
-    transform: translate(-50%, -50%) scale(1.1); 
-  }
-}
-
-@keyframes slowly-rotate {
-  0% { transform: translate(-50%, -50%) rotate(0deg); }
-  100% { transform: translate(-50%, -50%) rotate(360deg); }
-}
-
 @keyframes fadeInScale {
   0% {
     opacity: 0;
@@ -91,59 +75,12 @@ body {
   }
 }
 
-@keyframes pulse {
-  0%, 100% {
-    opacity: 0.3;
-    transform: scale(0.95);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.05);
-  }
-}
-
 @keyframes shimmer {
   0% {
     background-position: -200% 0;
   }
   100% {
     background-position: 200% 0;
-  }
-}
-
-@keyframes backgroundFloat {
-  0%, 100% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-}
-
-@keyframes gentleFloat {
-  0%, 100% {
-    transform: translateY(0px) rotate(0deg);
-  }
-  50% {
-    transform: translateY(-3px) rotate(0.5deg);
-  }
-}
-
-@keyframes satisfyingPulse {
-  0%, 100% {
-    box-shadow: 0 2px 12px 0 rgba(41,119,245,0.07);
-  }
-  50% {
-    box-shadow: 0 4px 20px 0 rgba(41,119,245,0.15);
-  }
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
   }
 }
 
@@ -518,10 +455,6 @@ body {
   animation: gentleFloat 4s ease-in-out infinite;
 }
 
-.satisfying-pulse {
-  animation: satisfyingPulse 2s ease-in-out infinite;
-}
-
 @media (max-width: 900px) {
   .search-results-header, .results-container {
     max-width: 98vw;
@@ -589,12 +522,6 @@ body {
   box-shadow: 0 2px 6px rgba(220,20,60,0.25);
 }
 
-@keyframes simpleBounce {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.05); }
-  100% { transform: scale(1); }
-}
-
 .domino-bounce {
-  animation: simpleBounce 0.4s ease-in-out;
+  animation: dominoPop 0.4s ease-in-out;
 }

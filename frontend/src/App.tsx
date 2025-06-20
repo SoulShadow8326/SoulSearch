@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import './App.css';
 
 interface SearchResult {
@@ -19,8 +19,6 @@ function App() {
   const [showContent, setShowContent] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [searchTime, setSearchTime] = useState('');
-  const [totalResults, setTotalResults] = useState(0);
   const [error, setError] = useState('');
   const [mode, setMode] = useState<'home' | 'results'>('home');
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -107,8 +105,6 @@ function App() {
         }));
         
         setResults(cleanedResults);
-        setTotalResults(data.total || 0);
-        setSearchTime(data.time_taken || '');
         setLoading(false);
         setDominoEffect(false); // Stop domino effect when results are ready
       } else {
@@ -189,8 +185,6 @@ function App() {
       for (let col = 0; col < GRID_COLS; col++) {
         const isTitle = row === (GRID_ROWS === 7 ? 2 : 1) && col >= (GRID_COLS === 6 ? 1 : 2) && col <= (GRID_COLS === 6 ? 4 : 5);
         const isSearch = row === (GRID_ROWS === 7 ? 4 : 3) && col >= (GRID_COLS === 6 ? 1 : 2) && col <= (GRID_COLS === 6 ? 4 : 5);
-        const isBackButton = mode === 'results' && row === 0 && col === 0;
-        const isResultsInfo = mode === 'results' && row === 0 && col === (GRID_COLS - 1);
         const isResultArea = mode === 'results' && row >= (GRID_ROWS === 7 ? 5 : 4) && col >= (GRID_COLS === 6 ? 0 : 1) && col <= (GRID_COLS === 6 ? 5 : 6);
         
         const rowProgress = row / (GRID_ROWS - 1);
@@ -371,8 +365,6 @@ function App() {
         const height = boxHeight;
         
         if ((isTitle || isSearch) && col > (GRID_COLS === 6 ? 1 : 2)) continue;
-        
-        const bottomUpDelay = (GRID_ROWS - 1 - row) * 80 + col * 20;
         
         // Calculate domino effect delay and scale
         const isDominoRow = dominoEffect && (row === (GRID_ROWS === 7 ? 4 : 3) || row === (GRID_ROWS === 7 ? 5 : 4));
