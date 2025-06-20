@@ -1,0 +1,12 @@
+soul.hackclub.app {
+    root * /home/soul/pub/frontend/build
+    
+    handle /api/* {
+        reverse_proxy localhost:8080
+    }
+    
+    handle {
+        try_files {path} /index.html
+        file_server
+    }
+}
