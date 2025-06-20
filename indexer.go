@@ -33,7 +33,7 @@ type Indexer struct {
 	stopWords map[string]bool
 }
 
-func NewIndexer() *Indexer {
+func CreateIndexer() *Indexer {
 	stopWords := loadIndexerStopWords()
 
 	return &Indexer{

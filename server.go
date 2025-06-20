@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -29,20 +30,19 @@ type SearchResponse struct {
 	TimeTaken  string         `json:"time_taken"`
 }
 
-func NewServer(port int) *Server {
+func CreateServer(port int) *Server {
 	if port == 0 {
 		port = 8080
 	}
 
-	engine := NewSearchEngine()
+	engine := CreateSearchEngine()
 
-	// Pre-index some high-quality content for common queries
 	server := &Server{
 		port:   port,
 		engine: engine,
 	}
 
-	go server.preIndexCommonQueries()
+	server.loadPersistedIndex()
 
 	return server
 }
@@ -57,7 +57,6 @@ func (s *Server) spaHandler(fs http.Handler) http.HandlerFunc {
 			fs.ServeHTTP(w, r)
 			return
 		}
-		// Serve index.html for all other routes (SPA)
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		http.ServeFile(w, r, "./frontend/build/index.html")
@@ -153,10 +152,8 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Starting search for query: '%s'", query)
 	startTime := time.Now()
 
-	// First, check if we already have good results in the existing index
 	existingResults, total, timeTaken := s.engine.SearchPaginated(query, 1, 10)
 
-	// If we have authoritative results, return them immediately
 	if s.hasAuthoritativeResults(existingResults) {
 		log.Printf("Found authoritative results in existing index, returning immediately")
 
@@ -179,7 +176,6 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("No authoritative results found, starting real-time crawling for query: '%s'", query)
 
-	// Add timeout handling
 	timeout := 25 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -189,7 +185,7 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		defer close(done)
-		crawler := NewContentCrawler()
+		crawler := CreateContentCrawler()
 		seeds := crawler.GetQualitySeeds(query)
 		log.Printf("Generated %d seeds for crawling", len(seeds))
 		crawledDocs = crawler.CrawlContent(seeds)
@@ -198,7 +194,6 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case <-done:
-		// Crawling completed successfully
 	case <-ctx.Done():
 		log.Printf("Crawling timed out after %v", timeout)
 		response := SearchResponse{
@@ -238,8 +233,7 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	index := s.indexPages(pages)
-	s.engine.LoadIndex(index)
+	s.persistCrawledContent(pages)
 
 	results, total, timeTaken := s.engine.SearchPaginated(query, 1, 10)
 
@@ -306,201 +300,6 @@ func (s *Server) indexPages(pages []Page) *InvertedIndex {
 	}
 
 	return index
-}
-
-func extractTitle(html string) string {
-	start := strings.Index(strings.ToLower(html), "<title>")
-	if start == -1 {
-		return "Untitled"
-	}
-	start += 7
-
-	end := strings.Index(strings.ToLower(html[start:]), "</title>")
-	if end == -1 {
-		return "Untitled"
-	}
-
-	title := html[start : start+end]
-	title = strings.TrimSpace(title)
-	if title == "" {
-		return "Untitled"
-	}
-
-	return title
-}
-
-func extractContent(html string) string {
-	content := html
-
-	// Remove script and style tags completely
-	content = removeScriptAndStyleTags(content)
-
-	// Remove Wikipedia-specific junk
-	content = removeWikipediaJunk(content)
-
-	// Remove HTML tags
-	content = removeHtmlTags(content)
-
-	// Clean up whitespace
-	content = strings.ReplaceAll(content, "\n", " ")
-	content = strings.ReplaceAll(content, "\t", " ")
-	content = strings.ReplaceAll(content, "\r", " ")
-
-	// Remove multiple spaces
-	for strings.Contains(content, "  ") {
-		content = strings.ReplaceAll(content, "  ", " ")
-	}
-
-	// Remove common junk patterns
-	content = removeCommonJunk(content)
-
-	words := strings.Fields(content)
-	if len(words) > 500 {
-		words = words[:500]
-	}
-
-	return strings.Join(words, " ")
-}
-
-func removeScriptAndStyleTags(html string) string {
-	// Remove <script>...</script>
-	for {
-		start := strings.Index(html, "<script")
-		if start == -1 {
-			break
-		}
-		end := strings.Index(html[start:], "</script>")
-		if end == -1 {
-			break
-		}
-		html = html[:start] + html[start+end+9:]
-	}
-
-	// Remove <style>...</style>
-	for {
-		start := strings.Index(html, "<style")
-		if start == -1 {
-			break
-		}
-		end := strings.Index(html[start:], "</style>")
-		if end == -1 {
-			break
-		}
-		html = html[:start] + html[start+end+8:]
-	}
-
-	return html
-}
-
-func removeWikipediaJunk(content string) string {
-	// Remove common Wikipedia patterns
-	junkPatterns := []string{
-		"hatnote{display:none!important}",
-		"redirect here",
-		"Doggy\" and \"Pooch\" redirect here",
-		"\"Doggy\" and \"Pooch\" redirect here",
-		"For other uses, see",
-		"Not to be confused with",
-		"This article is about",
-		"Jump to navigation",
-		"Jump to search",
-		"From Wikipedia, the free encyclopedia",
-		"Coordinates:",
-		"mw-parser-output",
-		"class=\"",
-		"id=\"",
-		"style=\"",
-		"at DuckDuckGo",
-		"Search results",
-		"DuckDuckGo",
-		"Also called the domestic",
-		"selectively bred from",
-		"during the Late Pleistocene",
-		"by hunter-gatherers",
-	}
-
-	for _, pattern := range junkPatterns {
-		content = strings.ReplaceAll(content, pattern, " ")
-	}
-
-	return content
-}
-
-func removeCommonJunk(content string) string {
-	// Remove common web junk
-	junkPatterns := []string{
-		"Cookie",
-		"Privacy Policy",
-		"Terms of Service",
-		"Sign up",
-		"Log in",
-		"Subscribe",
-		"Newsletter",
-		"Advertisement",
-		"Sponsored",
-		"Related Articles",
-		"More Stories",
-		"Comments",
-		"Share this",
-		"Follow us",
-		"Like us",
-		"Tweet",
-		"Facebook",
-		"Twitter",
-		"LinkedIn",
-		"Instagram",
-	}
-
-	contentLower := strings.ToLower(content)
-	for _, pattern := range junkPatterns {
-		patternLower := strings.ToLower(pattern)
-		if strings.Contains(contentLower, patternLower) {
-			// Remove the pattern case-insensitively
-			content = removePatternCaseInsensitive(content, pattern)
-		}
-	}
-
-	return content
-}
-
-func removePatternCaseInsensitive(text, pattern string) string {
-	// Simple case-insensitive replacement
-	lowerPattern := strings.ToLower(pattern)
-
-	result := ""
-	i := 0
-	for i < len(text) {
-		if i <= len(text)-len(pattern) && strings.ToLower(text[i:i+len(pattern)]) == lowerPattern {
-			result += " "
-			i += len(pattern)
-		} else {
-			result += string(text[i])
-			i++
-		}
-	}
-
-	return result
-}
-
-func removeHtmlTags(html string) string {
-	var result strings.Builder
-	inTag := false
-
-	for _, char := range html {
-		if char == '<' {
-			inTag = true
-			continue
-		}
-		if char == '>' {
-			inTag = false
-			continue
-		}
-		if !inTag {
-			result.WriteRune(char)
-		}
-	}
-
-	return result.String()
 }
 
 func tokenize(text string) []string {
@@ -609,121 +408,26 @@ func (s *Server) generateSimpleSnippet(url, query string) string {
 	return bestSentence
 }
 
-func (s *Server) preIndexCommonQueries() {
-	log.Printf("Starting pre-indexing of common queries...")
-
-	// Common topics that benefit from authoritative sources
-	commonTopics := []struct {
-		topic string
-		urls  []string
-	}{
-		{
-			topic: "duck",
-			urls: []string{
-				"https://en.wikipedia.org/wiki/Duck",
-				"https://simple.wikipedia.org/wiki/Duck",
-			},
-		},
-		{
-			topic: "frog",
-			urls: []string{
-				"https://en.wikipedia.org/wiki/Frog",
-				"https://simple.wikipedia.org/wiki/Frog",
-			},
-		},
-		{
-			topic: "cat",
-			urls: []string{
-				"https://en.wikipedia.org/wiki/Cat",
-				"https://simple.wikipedia.org/wiki/Cat",
-			},
-		},
-		{
-			topic: "dog",
-			urls: []string{
-				"https://en.wikipedia.org/wiki/Dog",
-				"https://simple.wikipedia.org/wiki/Dog",
-			},
-		},
-		{
-			topic: "covid",
-			urls: []string{
-				"https://en.wikipedia.org/wiki/COVID-19",
-				"https://simple.wikipedia.org/wiki/COVID-19",
-			},
-		},
-		{
-			topic: "hackclub",
-			urls: []string{
-				"https://hackclub.com",
-				"https://en.wikipedia.org/wiki/Hack_Club",
-			},
-		},
-		{
-			topic: "python",
-			urls: []string{
-				"https://en.wikipedia.org/wiki/Python_(programming_language)",
-				"https://docs.python.org/3/",
-			},
-		},
-	}
-
-	crawler := NewContentCrawler()
-	var allDocs []CrawledDocument
-
-	for _, topic := range commonTopics {
-		log.Printf("Pre-indexing topic: %s", topic.topic)
-
-		var seeds []SeedURL
-		for _, url := range topic.urls {
-			seeds = append(seeds, SeedURL{
-				URL:         url,
-				Priority:    0.9,
-				Topic:       topic.topic,
-				Source:      "preindex",
-				Reliability: 0.95,
-			})
-		}
-
-		docs := crawler.CrawlContent(seeds)
-		allDocs = append(allDocs, docs...)
-		log.Printf("Pre-indexed %d documents for topic: %s", len(docs), topic.topic)
-	}
-
-	if len(allDocs) > 0 {
-		var pages []Page
-		for _, doc := range allDocs {
-			page := Page{
-				URL:     doc.URL,
-				Title:   doc.Title,
-				Content: doc.Content,
-				Crawled: doc.CrawledAt,
-			}
-			pages = append(pages, page)
-		}
-
-		index := s.indexPages(pages)
-		s.engine.LoadIndex(index)
-		log.Printf("Pre-indexing completed. Loaded %d documents into search index", len(pages))
-	}
-}
-
 func (s *Server) hasAuthoritativeResults(results []SearchResult) bool {
-	if len(results) < 3 {
-		return false // Need at least 3 results to consider authoritative enough
+	if len(results) == 0 {
+		return false
 	}
 
-	// Check if we have multiple authoritative sources
+	topResult := results[0]
+	if topResult.Score < 20.0 {
+		return false
+	}
+
 	authoritativeDomains := []string{
 		"wikipedia.org",
 		"hackclub.com",
 		"hackclub.org",
 		"docs.python.org",
+		"cdc.gov",
+		"nih.gov",
 		"github.com",
 		"stackoverflow.com",
 		"britannica.com",
-		"nationalgeographic.com",
-		"smithsonianmag.com",
 	}
 
 	authoritativeCount := 0
@@ -734,8 +438,116 @@ func (s *Server) hasAuthoritativeResults(results []SearchResult) bool {
 				break
 			}
 		}
+		if authoritativeCount >= 1 {
+			break
+		}
 	}
 
-	// Only consider it authoritative if we have multiple good sources
-	return authoritativeCount >= 2
+	return authoritativeCount >= 1
+}
+
+func (s *Server) loadPersistedIndex() {
+	if index := s.loadIndexFromDisk(); index != nil {
+		s.engine.LoadIndex(index)
+		log.Printf("Loaded persisted index with %d documents", len(index.Docs))
+	} else {
+		log.Printf("No persisted index found, starting with empty index")
+	}
+}
+
+func (s *Server) persistCrawledContent(pages []Page) {
+	currentIndex := s.engine.GetCurrentIndex()
+	if currentIndex == nil {
+		currentIndex = &InvertedIndex{
+			Terms: make(map[string][]TermFreq),
+			Docs:  make(map[string]Document),
+		}
+	}
+
+	newIndex := s.indexPages(pages)
+	s.mergeIndexes(currentIndex, newIndex)
+
+	s.saveIndexToDisk(currentIndex)
+	s.engine.LoadIndex(currentIndex)
+}
+
+func (s *Server) mergeIndexes(existing, new *InvertedIndex) {
+	for url, doc := range new.Docs {
+		existing.Docs[url] = doc
+	}
+
+	for term, termFreqs := range new.Terms {
+		if existingFreqs, exists := existing.Terms[term]; exists {
+			urlMap := make(map[string]bool)
+			for _, tf := range existingFreqs {
+				urlMap[tf.URL] = true
+			}
+
+			for _, tf := range termFreqs {
+				if !urlMap[tf.URL] {
+					existing.Terms[term] = append(existing.Terms[term], tf)
+				}
+			}
+		} else {
+			existing.Terms[term] = termFreqs
+		}
+	}
+}
+
+func (s *Server) saveIndexToDisk(index *InvertedIndex) error {
+	if err := os.MkdirAll("data", 0755); err != nil {
+		return err
+	}
+
+	docsFile, err := os.Create("data/documents.json")
+	if err != nil {
+		return err
+	}
+	defer docsFile.Close()
+
+	if err := json.NewEncoder(docsFile).Encode(index.Docs); err != nil {
+		return err
+	}
+
+	termsFile, err := os.Create("data/terms.json")
+	if err != nil {
+		return err
+	}
+	defer termsFile.Close()
+
+	if err := json.NewEncoder(termsFile).Encode(index.Terms); err != nil {
+		return err
+	}
+
+	log.Printf("Persisted index with %d documents and %d terms", len(index.Docs), len(index.Terms))
+	return nil
+}
+
+func (s *Server) loadIndexFromDisk() *InvertedIndex {
+	docsFile, err := os.Open("data/documents.json")
+	if err != nil {
+		return nil
+	}
+	defer docsFile.Close()
+
+	var docs map[string]Document
+	if err := json.NewDecoder(docsFile).Decode(&docs); err != nil {
+		return nil
+	}
+
+	termsFile, err := os.Open("data/terms.json")
+	if err != nil {
+		return nil
+	}
+	defer termsFile.Close()
+
+	var terms map[string][]TermFreq
+	if err := json.NewDecoder(termsFile).Decode(&terms); err != nil {
+		return nil
+	}
+
+	return &InvertedIndex{
+		Terms: terms,
+		Docs:  docs,
+	}
 }

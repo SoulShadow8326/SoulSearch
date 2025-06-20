@@ -27,6 +27,7 @@ function App() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [dominoEffect, setDominoEffect] = useState(false);
+  const [fallingTiles, setFallingTiles] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setTimeout(() => setShowContent(true), 500);
@@ -154,6 +155,25 @@ function App() {
     setShowSuggestions(false);
     setLoading(false);
     setDominoEffect(false);
+  };
+
+  const handleTileClick = (row: number, col: number) => {
+    const tileKey = `${row}-${col}`;
+    
+    // Don't allow clicking already falling tiles
+    if (fallingTiles.has(tileKey)) return;
+    
+    // Add to falling tiles set
+    setFallingTiles(prev => new Set(prev).add(tileKey));
+    
+    // Remove from falling tiles after animation completes
+    setTimeout(() => {
+      setFallingTiles(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(tileKey);
+        return newSet;
+      });
+    }, 800); // Match the 0.8s animation duration
   };
 
   const GRID_COLS = dimensions.width < 768 ? 6 : 8;
@@ -356,11 +376,13 @@ function App() {
         
         // Calculate domino effect delay and scale
         const isDominoRow = dominoEffect && (row === (GRID_ROWS === 7 ? 4 : 3) || row === (GRID_ROWS === 7 ? 5 : 4));
+        const tileKey = `${row}-${col}`;
+        const isFalling = fallingTiles.has(tileKey);
         
         grid.push(
           <div
             key={`${row}-${col}`}
-            className={`grid-box ${isDominoRow ? 'domino-bounce' : ''}`}
+            className={`grid-box ${isDominoRow ? 'domino-bounce' : ''} ${isFalling ? 'tile-falling' : ''}`}
             style={{
               position: 'absolute',
               left: col * (boxWidth + gap),
@@ -373,10 +395,10 @@ function App() {
               alignItems: 'center',
               justifyContent: 'center',
               filter: content ? 'none' : 'blur(1px)',
-              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-              cursor: (content && (isTitle || isSearch)) || (content && isResultArea) ? 'pointer' : 'default',
+              transition: isFalling ? 'none' : 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+              cursor: (content && (isTitle || isSearch)) || (content && isResultArea) || (!content && !isFalling) ? 'pointer' : 'default',
               opacity: showContent ? (content ? 1 : 0.7) : 0,
-              animation: showContent ? `fadeInScale 0.5s cubic-bezier(0.4, 0, 0.2, 1) ${(row * 0.08 + col * 0.03)}s both` : undefined
+              animation: showContent && !isFalling ? `fadeInScale 0.5s cubic-bezier(0.4, 0, 0.2, 1) ${(row * 0.08 + col * 0.03)}s both` : undefined
             }}
             onMouseEnter={(e) => {
               if (content && !loading) {
@@ -394,6 +416,20 @@ function App() {
                   e.currentTarget.style.boxShadow = '0 0 0 3px #2977F5, 0 8px 32px rgba(41,119,245,0.15)';
                   e.currentTarget.style.filter = 'brightness(1)';
                 }
+              }
+            }}
+            onClick={() => {
+              if (content && (isTitle || isSearch)) {
+                // Handle title or search box click
+                if (isTitle) {
+                  goHome();
+                }
+              } else if (content && isResultArea) {
+                // Handle result area click
+                window.open(results[0].url, '_blank', 'noopener,noreferrer');
+              } else if (!content && !isFalling) {
+                // Handle background tile click for falling effect
+                handleTileClick(row, col);
               }
             }}
           >

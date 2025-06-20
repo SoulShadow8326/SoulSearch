@@ -19,17 +19,17 @@ func main() {
 			fmt.Println("URL required for crawling mode")
 			os.Exit(1)
 		}
-		crawler := NewContentCrawler()
+		crawler := CreateContentCrawler()
 		_ = crawler
 	case "index":
-		indexer := NewIndexer()
+		indexer := CreateIndexer()
 		indexer.BuildIndex()
 	case "server":
-		server := NewServer(*port)
+		server := CreateServer(*port)
 		log.Printf("Starting SoulSearch HTTP server on port %d", *port)
 		server.Start()
 	case "proxy":
-		proxy := NewProxy(*port, "/tmp/exsearch.sock")
+		proxy := CreateProxy(*port, "/tmp/exsearch.sock")
 		proxy.Start()
 	default:
 		fmt.Println("Invalid mode. Use: server, proxy, crawl, or index")

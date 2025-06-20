@@ -25,21 +25,16 @@ type SearchSuggestion struct {
 	Text      string  `json:"text"`
 	Score     float64 `json:"score"`
 	Frequency int     `json:"frequency"`
-	Type      string  `json:"type"` // "completion", "correction", "trending"
+	Type      string  `json:"type"`
 }
 
 type TrieNode struct {
 	children map[rune]*TrieNode
-	isEnd    bool
-	freq     int
-	queries  []string
 }
 
 type AutoComplete struct {
 	root           *TrieNode
-	mu             sync.RWMutex
 	maxSuggestions int
-	minFreq        int
 	trending       []string
 	lastUpdated    time.Time
 }
@@ -95,25 +90,7 @@ type TrendData struct {
 	Unique int `json:"unique"`
 }
 
-type RealTimeAnalyzer struct {
-	searchEngine *SearchEngine
-	monitor      *PerformanceMonitor
-	trends       map[int]int
-	hourlyStats  map[int]TrendData
-	mutex        sync.RWMutex
-}
-
-type PerformanceMonitor struct {
-	queryTimes   []time.Duration
-	mu           sync.RWMutex
-	startTime    time.Time
-	errorCount   int64
-	requestCount int64
-	cacheHits    int64
-	cacheMisses  int64
-}
-
-func NewSearchEngine() *SearchEngine {
+func CreateSearchEngine() *SearchEngine {
 	stopWords := loadStopWordsFromFile()
 	synonyms := loadSynonymsFromFile()
 
@@ -137,7 +114,7 @@ func NewSearchEngine() *SearchEngine {
 		termCounts:   make(map[string]int),
 		docLengths:   make(map[string]int),
 		avgDocLength: 0,
-		autoComplete: NewAutoComplete(),
+		autoComplete: CreateAutoComplete(),
 		queryLog:     make([]QueryLogEntry, 0, 10000),
 		popularTerms: make(map[string]int),
 	}
@@ -149,13 +126,12 @@ func NewSearchEngine() *SearchEngine {
 	return engine
 }
 
-func NewAutoComplete() *AutoComplete {
+func CreateAutoComplete() *AutoComplete {
 	return &AutoComplete{
 		root: &TrieNode{
 			children: make(map[rune]*TrieNode),
 		},
 		maxSuggestions: 10,
-		minFreq:        2,
 		trending:       make([]string, 0),
 		lastUpdated:    time.Now(),
 	}
@@ -251,13 +227,12 @@ func (se *SearchEngine) computeIDF() {
 func (se *SearchEngine) Search(query string, limit int) ([]SearchResult, string) {
 	start := time.Now()
 
-	results := se.SearchAdvanced(query, limit)
+	results := se.SearchWithLimit(query, limit)
 
 	elapsed := time.Since(start)
 	return results, elapsed.String()
 }
 
-// SearchPaginated performs a paginated search with proper offset calculation
 func (se *SearchEngine) SearchPaginated(query string, page, limit int) ([]SearchResult, int, string) {
 	start := time.Now()
 	se.totalQueries++
@@ -269,7 +244,6 @@ func (se *SearchEngine) SearchPaginated(query string, page, limit int) ([]Search
 		return nil, 0, time.Since(start).String()
 	}
 
-	// Check cache for all results first
 	cacheKey := strings.ToLower(query)
 	var allResults []SearchResult
 
@@ -284,32 +258,28 @@ func (se *SearchEngine) SearchPaginated(query string, page, limit int) ([]Search
 			allResults = cached
 		} else {
 			se.mu.RUnlock()
-			allResults = se.SearchAdvanced(query, 10000)
+			allResults = se.SearchWithLimit(query, 10000)
 		}
 	} else {
 		se.mu.RUnlock()
 		se.analytics[query]++
-		allResults = se.SearchAdvanced(query, 10000)
+		allResults = se.SearchWithLimit(query, 10000)
 	}
 
 	total := len(allResults)
 
-	// Calculate offset
 	offset := (page - 1) * limit
 	if offset >= total {
 		return []SearchResult{}, total, time.Since(start).String()
 	}
 
-	// Calculate end index
 	end := offset + limit
 	if end > total {
 		end = total
 	}
 
-	// Return paginated slice
 	paginatedResults := allResults[offset:end]
 
-	// Update ranks for the paginated results
 	for i := range paginatedResults {
 		paginatedResults[i].Rank = offset + i + 1
 	}
@@ -319,7 +289,7 @@ func (se *SearchEngine) SearchPaginated(query string, page, limit int) ([]Search
 	return paginatedResults, total, elapsed.String()
 }
 
-func (se *SearchEngine) SearchAdvanced(query string, maxResults int) []SearchResult {
+func (se *SearchEngine) SearchWithLimit(query string, maxResults int) []SearchResult {
 	start := time.Now()
 	se.totalQueries++
 
@@ -347,10 +317,10 @@ func (se *SearchEngine) SearchAdvanced(query string, maxResults int) []SearchRes
 
 	se.analytics[query]++
 
-	queryTerms := se.processAdvancedQuery(query)
+	queryTerms := se.processQuery(query)
 	log.Printf("Processed query terms: %v", queryTerms)
 
-	candidates := se.findAdvancedCandidates(queryTerms)
+	candidates := se.findCandidates(queryTerms)
 	log.Printf("Found %d candidates", len(candidates))
 
 	if len(candidates) == 0 && len(queryTerms) == 1 {
@@ -375,10 +345,9 @@ func (se *SearchEngine) SearchAdvanced(query string, maxResults int) []SearchRes
 		return nil
 	}
 
-	results := se.scoreAdvancedResults(queryTerms, candidates, query)
+	results := se.scoreResults(queryTerms, candidates, query)
 	log.Printf("Scored %d documents", len(results))
 
-	// Sort results by score (highest first)
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Score > results[j].Score
 	})
@@ -401,7 +370,7 @@ func (se *SearchEngine) SearchAdvanced(query string, maxResults int) []SearchRes
 	return results
 }
 
-func (se *SearchEngine) processAdvancedQuery(query string) []string {
+func (se *SearchEngine) processQuery(query string) []string {
 	query = strings.ToLower(query)
 	log.Printf("Processing query: '%s'", query)
 
@@ -511,7 +480,7 @@ func (se *SearchEngine) stemWord(word string) string {
 	return word
 }
 
-func (se *SearchEngine) findAdvancedCandidates(queryTerms []string) map[string]bool {
+func (se *SearchEngine) findCandidates(queryTerms []string) map[string]bool {
 	candidates := make(map[string]bool)
 	termScores := make(map[string]float64)
 	requiredTerms := make(map[string]bool)
@@ -656,7 +625,7 @@ func (se *SearchEngine) calculateTermWeight(term string) float64 {
 	return idf
 }
 
-func (se *SearchEngine) scoreAdvancedResults(queryTerms []string, candidates map[string]bool, originalQuery string) []SearchResult {
+func (se *SearchEngine) scoreResults(queryTerms []string, candidates map[string]bool, originalQuery string) []SearchResult {
 	var results []SearchResult
 	seenTitles := make(map[string]bool)
 
@@ -676,14 +645,13 @@ func (se *SearchEngine) scoreAdvancedResults(queryTerms []string, candidates map
 		}
 		seenTitles[titleKey] = true
 
-		relevanceScore := se.calculateIntelligentRelevance(queryTerms, originalQuery, doc)
+		relevanceScore := se.calculateRelevance(queryTerms, originalQuery, doc)
 
-		// Lower threshold to show more results
 		if relevanceScore < 0.1 {
 			continue
 		}
 
-		snippet := se.generateAdvancedSnippet(doc.Content, queryTerms, 200)
+		snippet := se.generateSnippet(doc.Content, queryTerms, 200)
 
 		result := SearchResult{
 			URL:     doc.URL,
@@ -698,7 +666,7 @@ func (se *SearchEngine) scoreAdvancedResults(queryTerms []string, candidates map
 	return results
 }
 
-func (se *SearchEngine) calculateIntelligentRelevance(queryTerms []string, originalQuery string, doc Document) float64 {
+func (se *SearchEngine) calculateRelevance(queryTerms []string, originalQuery string, doc Document) float64 {
 	titleLower := strings.ToLower(doc.Title)
 	contentLower := strings.ToLower(doc.Content)
 	queryLower := strings.ToLower(originalQuery)
@@ -886,7 +854,6 @@ func (se *SearchEngine) calculateTermPositions(queryTerms []string, content stri
 func (se *SearchEngine) calculateContentQuality(doc Document) float64 {
 	qualityScore := 0.0
 
-	// Content length indicates comprehensive coverage
 	contentLength := len(doc.Content)
 	if contentLength > 5000 {
 		qualityScore += 8.0
@@ -898,13 +865,11 @@ func (se *SearchEngine) calculateContentQuality(doc Document) float64 {
 		qualityScore += 2.0
 	}
 
-	// Title quality indicates well-structured content
 	titleLength := len(doc.Title)
 	if titleLength > 10 && titleLength < 100 {
 		qualityScore += 3.0
 	}
 
-	// Word diversity indicates rich content
 	words := strings.Fields(strings.ToLower(doc.Content))
 	uniqueWords := make(map[string]bool)
 	for _, word := range words {
@@ -924,7 +889,6 @@ func (se *SearchEngine) calculateContentQuality(doc Document) float64 {
 		}
 	}
 
-	// Check for structured content indicators
 	contentLower := strings.ToLower(doc.Content)
 	structureIndicators := []string{
 		"introduction", "overview", "definition", "explanation",
@@ -940,7 +904,6 @@ func (se *SearchEngine) calculateContentQuality(doc Document) float64 {
 	}
 	qualityScore += float64(structureCount) * 0.5
 
-	// Penalize low-quality indicators
 	lowQualityPatterns := []string{
 		"click here", "buy now", "limited time", "advertisement",
 		"popup", "loading", "javascript required", "cookies",
@@ -994,7 +957,7 @@ func (se *SearchEngine) calculateRelevancePenalties(queryTerms []string, doc Doc
 	return penalty
 }
 
-func (se *SearchEngine) generateAdvancedSnippet(content string, queryTerms []string, maxLength int) string {
+func (se *SearchEngine) generateSnippet(content string, queryTerms []string, maxLength int) string {
 	if content == "" || len(strings.TrimSpace(content)) < 10 {
 		return "No content available"
 	}
@@ -1082,10 +1045,6 @@ func (se *SearchEngine) GetSuggestions(query string) []string {
 }
 
 func (se *SearchEngine) GetAnalytics() interface{} {
-	return nil
-}
-
-func (se *SearchEngine) GetAdvancedAnalytics() interface{} {
 	return nil
 }
 
@@ -1252,4 +1211,10 @@ func (se *SearchEngine) handleSearchOperators(query string) string {
 	query = strings.ReplaceAll(query, "+", "")
 
 	return query
+}
+
+func (se *SearchEngine) GetCurrentIndex() *InvertedIndex {
+	se.mu.RLock()
+	defer se.mu.RUnlock()
+	return se.index
 }

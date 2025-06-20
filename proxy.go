@@ -13,7 +13,7 @@ type Proxy struct {
 	socketPath string
 }
 
-func NewProxy(port int, socketPath string) *Proxy {
+func CreateProxy(port int, socketPath string) *Proxy {
 	return &Proxy{
 		port:       port,
 		socketPath: socketPath,
