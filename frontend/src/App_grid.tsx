@@ -50,7 +50,7 @@ function App() {
     }
     
     try {
-      const response = await fetch(`http://localhost:8080/suggest?q=${encodeURIComponent(searchQuery)}`);
+      const response = await fetch(`http://localhost:8080/api/suggestions?q=${encodeURIComponent(searchQuery)}`);
       if (response.ok) {
         const data = await response.json();
         setSuggestions(data.suggestions || []);
@@ -80,7 +80,7 @@ function App() {
     setError('');
     
     try {
-      const response = await fetch(`http://localhost:8080/search?q=${encodeURIComponent(searchQuery)}`);
+      const response = await fetch(`http://localhost:8080/api/dynamic-search?q=${encodeURIComponent(searchQuery)}`);
       if (!response.ok) throw new Error('Search failed');
       
       const data: SearchResponse = await response.json();

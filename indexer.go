@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 )
 
@@ -26,6 +27,15 @@ type Document struct {
 	Content  string
 	Length   int
 	PageRank float64
+}
+
+type Page struct {
+	URL     string
+	Title   string
+	Content string
+	Links   []string
+	Hash    string
+	Crawled time.Time
 }
 
 type Indexer struct {
@@ -396,4 +406,8 @@ func (idx *Indexer) AddDocument(doc Document) {
 			idx.index.Terms.Store(token, termFreqs)
 		}
 	}
+}
+
+func (idx *Indexer) GetIndex() *InvertedIndex {
+	return idx.index
 }
