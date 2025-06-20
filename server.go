@@ -161,18 +161,7 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	done := make(chan struct{})
-	var crawledDocs []CrawledDocument
-
-	go func() {
-		defer close(done)
-		crawler := CreateContentCrawler()
-		seeds := crawler.GetQualitySeeds(query)
-		crawledDocs = crawler.CrawlContent(seeds)
-	}()
-
 	select {
-	case <-done:
 	case <-ctx.Done():
 		response := SearchResponse{
 			Results:    []SearchResult{},
@@ -183,47 +172,15 @@ func (s *Server) handleDynamicSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(response)
 		return
-	}
-
-	var pages []Page
-	for _, doc := range crawledDocs {
-		page := Page{
-			URL:     doc.URL,
-			Title:   doc.Title,
-			Content: doc.Content,
-			Crawled: doc.CrawledAt,
-		}
-		pages = append(pages, page)
-	}
-
-	if len(pages) == 0 {
-		response := SearchResponse{
-			Results:    []SearchResult{},
-			Total:      0,
-			Page:       1,
-			TotalPages: 0,
-			TimeTaken:  time.Since(startTime).String(),
-		}
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	s.persistCrawledContent(pages)
-
-	results, total, timeTaken := s.engine.SearchPaginated(query, 1, 10)
-
-	for i := range results {
-		if results[i].Snippet == "" {
-			results[i].Snippet = s.generateSimpleSnippet(results[i].URL, query)
-		}
+	default:
 	}
 
 	response := SearchResponse{
-		Results:    results,
+		Results:    existingResults,
 		Total:      total,
 		Page:       1,
 		TotalPages: (total + 9) / 10,
-		TimeTaken:  timeTaken,
+		TimeTaken:  time.Since(startTime).String(),
 	}
 
 	json.NewEncoder(w).Encode(response)

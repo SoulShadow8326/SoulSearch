@@ -20,12 +20,13 @@ func main() {
 
 	switch *mode {
 	case "crawl":
-		if *url == "" {
-			fmt.Println("URL required for crawling mode")
+		fmt.Println("Legacy crawl mode deprecated. Use 'distributed' mode instead.")
+		crawler := CreateDistributedCrawler(*workers, *sockPath)
+		if err := crawler.Start(); err != nil {
+			fmt.Printf("Failed to start distributed crawler: %v\n", err)
 			os.Exit(1)
 		}
-		crawler := CreateContentCrawler()
-		_ = crawler
+		select {}
 	case "distributed":
 		crawler := CreateDistributedCrawler(*workers, *sockPath)
 		if err := crawler.Start(); err != nil {
