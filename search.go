@@ -1140,6 +1140,23 @@ func (se *SearchEngine) spellCorrect(term string) string {
 		return term
 	}
 
+	commonWords := map[string]bool{
+		"does": true, "doesn": true, "what": true, "when": true, "where": true, "why": true,
+		"how": true, "who": true, "which": true, "that": true, "this": true, "they": true,
+		"them": true, "their": true, "there": true, "here": true, "were": true, "are": true,
+		"was": true, "will": true, "would": true, "could": true, "should": true, "can": true,
+		"has": true, "have": true, "had": true, "been": true, "being": true, "get": true,
+		"got": true, "take": true, "took": true, "make": true, "made": true, "come": true,
+		"came": true, "go": true, "went": true, "see": true, "saw": true, "know": true,
+		"knew": true, "think": true, "thought": true, "say": true, "said": true, "tell": true,
+		"told": true, "give": true, "gave": true, "find": true, "found": true, "work": true,
+		"worked": true, "place": true, "time": true, "year": true, "day": true, "way": true,
+	}
+
+	if commonWords[term] {
+		return term
+	}
+
 	bestMatch := term
 	minDistance := 2
 

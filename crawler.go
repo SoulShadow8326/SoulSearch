@@ -170,23 +170,28 @@ func (c *ContentCrawler) classifyQueryIntent(query string) string {
 func (c *ContentCrawler) getDefinitionSources(query string) []SeedURL {
 	var seeds []SeedURL
 
+	entity := c.extractEntityFromQuestion(query)
+	searchTerm := query
+	if entity != "" {
+		searchTerm = entity
+	}
+
 	if c.isSlangOrCulturalQuery(query) {
 		seeds = append(seeds, []SeedURL{
-			{URL: fmt.Sprintf("https://www.urbandictionary.com/define.php?term=%s", url.QueryEscape(query)), Priority: 0.95, Topic: "slang", Source: "urbandictionary", Reliability: 0.85},
-			{URL: fmt.Sprintf("https://www.dictionary.com/browse/%s", url.QueryEscape(query)), Priority: 0.9, Topic: "dictionary", Source: "dictionary", Reliability: 0.95},
-			{URL: fmt.Sprintf("https://www.merriam-webster.com/dictionary/%s", url.QueryEscape(query)), Priority: 0.85, Topic: "dictionary", Source: "merriamwebster", Reliability: 0.95},
-			{URL: fmt.Sprintf("https://en.wiktionary.org/wiki/%s", url.QueryEscape(query)), Priority: 0.8, Topic: "dictionary", Source: "wiktionary", Reliability: 0.9},
+			{URL: fmt.Sprintf("https://www.urbandictionary.com/define.php?term=%s", url.QueryEscape(searchTerm)), Priority: 0.95, Topic: "slang", Source: "urbandictionary", Reliability: 0.85},
+			{URL: fmt.Sprintf("https://www.dictionary.com/browse/%s", url.QueryEscape(searchTerm)), Priority: 0.9, Topic: "dictionary", Source: "dictionary", Reliability: 0.95},
+			{URL: fmt.Sprintf("https://www.merriam-webster.com/dictionary/%s", url.QueryEscape(searchTerm)), Priority: 0.85, Topic: "dictionary", Source: "merriamwebster", Reliability: 0.95},
+			{URL: fmt.Sprintf("https://en.wiktionary.org/wiki/%s", url.QueryEscape(searchTerm)), Priority: 0.8, Topic: "dictionary", Source: "wiktionary", Reliability: 0.9},
 		}...)
 	} else {
 		seeds = append(seeds, []SeedURL{
-			{URL: fmt.Sprintf("https://www.merriam-webster.com/dictionary/%s", url.QueryEscape(query)), Priority: 0.95, Topic: "dictionary", Source: "merriamwebster", Reliability: 0.95},
-			{URL: fmt.Sprintf("https://www.dictionary.com/browse/%s", url.QueryEscape(query)), Priority: 0.9, Topic: "dictionary", Source: "dictionary", Reliability: 0.95},
-			{URL: fmt.Sprintf("https://en.wiktionary.org/wiki/%s", url.QueryEscape(query)), Priority: 0.85, Topic: "dictionary", Source: "wiktionary", Reliability: 0.9},
-			{URL: fmt.Sprintf("https://www.oxfordlearnersdictionaries.com/definition/english/%s", url.QueryEscape(query)), Priority: 0.8, Topic: "dictionary", Source: "oxford", Reliability: 0.95},
+			{URL: fmt.Sprintf("https://www.merriam-webster.com/dictionary/%s", url.QueryEscape(searchTerm)), Priority: 0.95, Topic: "dictionary", Source: "merriamwebster", Reliability: 0.95},
+			{URL: fmt.Sprintf("https://www.dictionary.com/browse/%s", url.QueryEscape(searchTerm)), Priority: 0.9, Topic: "dictionary", Source: "dictionary", Reliability: 0.95},
+			{URL: fmt.Sprintf("https://en.wiktionary.org/wiki/%s", url.QueryEscape(searchTerm)), Priority: 0.85, Topic: "dictionary", Source: "wiktionary", Reliability: 0.9},
+			{URL: fmt.Sprintf("https://www.oxfordlearnersdictionaries.com/definition/english/%s", url.QueryEscape(searchTerm)), Priority: 0.8, Topic: "dictionary", Source: "oxford", Reliability: 0.95},
 		}...)
 	}
 
-	entity := c.extractEntityFromQuestion(query)
 	if entity != "" {
 		seeds = append(seeds, []SeedURL{
 			{URL: fmt.Sprintf("https://en.wikipedia.org/wiki/%s", c.generateWikipediaTitle(entity)), Priority: 0.75, Topic: "encyclopedia", Source: "wikipedia", Reliability: 0.95},
