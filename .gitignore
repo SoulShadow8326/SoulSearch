@@ -1,6 +1,5 @@
 *.gob
 soulsearch
-exsearch
 crawler-client
 /tmp/soulsearch.sock
 /tmp/exsearch.sock
@@ -21,3 +20,4 @@ server.log
 *~
 .DS_Store
 *.tmp
+results.json
