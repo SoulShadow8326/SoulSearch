@@ -1,4 +1,4 @@
-# ExSearch
+# SoulSearch
 
 A high-performance search engine built from scratch in pure Go. Features web crawling, custom indexing, PageRank algorithm, and a modern web interface.
 

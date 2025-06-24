@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
 )
+
+var ctx context.Context
+var cancel context.CancelFunc
 
 type PageData struct {
 	URL   string   `json:"url"`
@@ -55,6 +59,7 @@ func urlAlreadySaved(url string) bool {
 }
 
 func main() {
+	ctx, cancel = context.WithCancel(context.Background())
 	setupCloseHandler()
 
 	loadedPages, err := loadFromJSON("results.json")
@@ -66,13 +71,15 @@ func main() {
 		}
 	}
 
-	startURL := "en.wikipedia.org"
+	startURL := "https://en.wikipedia.org"
 	fmt.Println("Starting crawl at:", startURL)
 
 	wg.Add(1)
 	go Crawl(startURL)
 	wg.Wait()
-	fmt.Println("Done crawling. Exiting.")
+
+	mu.Lock()
+	defer mu.Unlock()
 	err = saveToJSON("results.json", pages)
 	if err != nil {
 		fmt.Println("Error saving JSON:", err)

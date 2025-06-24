@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"context"
 )
 
 const saveEvery = 10
@@ -16,16 +17,21 @@ const saveEvery = 10
 var shutdown = make(chan struct{})
 var CrawlCount int
 
-func FetchHTML(url string) (string, error) {
+func FetchHTML(ctx context.Context, url string) (string, error) {
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		url = "https://" + url
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", err
 	}
 
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
 
-	resp, err := client.Get(url)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -38,13 +44,16 @@ func FetchHTML(url string) (string, error) {
 	return string(body), nil
 }
 
+
 func Crawl(url string) {
 	defer wg.Done()
+
 	select {
 	case <-shutdown:
 		return
 	default:
 	}
+
 	fmt.Println("Entered Crawl() for:", url)
 
 	mu.Lock()
@@ -57,9 +66,10 @@ func Crawl(url string) {
 
 	fmt.Println("Crawling:", url)
 
-	html, err := FetchHTML(url)
+	html, err := FetchHTML(ctx, url)
 	if err != nil {
-		panic(fmt.Sprintf("FetchHTML failed for %s: %v", url, err))
+		fmt.Println("FetchHTML failed:", err)
+		return
 	}
 	fmt.Println("Fetched HTML content for:", url)
 
@@ -69,23 +79,30 @@ func Crawl(url string) {
 	mu.Lock()
 	if !urlAlreadySaved(url) {
 		pages = append(pages, PageData{URL: url, Links: links})
+		CrawlCount++
 	}
-
-	CrawlCount++
 	shouldSave := CrawlCount%saveEvery == 0
 	mu.Unlock()
+
 	if shouldSave {
 		fmt.Println("Checkpoint")
 		err := saveToJSON("results.json", pages)
 		if err != nil {
-			fmt.Println("error saving", err)
+			fmt.Println("error saving:", err)
 		} else {
 			fmt.Println("checkpointed")
 		}
 	}
+
 	for _, link := range links {
 		if strings.HasPrefix(link, "/") {
 			continue
+		}
+
+		select {
+		case <-shutdown:
+			return
+		default:
 		}
 
 		mu.Lock()
@@ -97,19 +114,10 @@ func Crawl(url string) {
 		mu.Unlock()
 
 		wg.Add(1)
-
-		go func(l string) {
-			select {
-			case <-shutdown:
-				wg.Done()
-				return
-			default:
-				Crawl(l)
-			}
-		}(link)
-
+		go Crawl(link) 
 	}
 }
+
 
 func setupCloseHandler() {
 	c := make(chan os.Signal, 1)
@@ -119,13 +127,12 @@ func setupCloseHandler() {
 		<-c
 		fmt.Println("signal interrupt")
 
-		close(shutdown)
-
-		wg.Wait()
+		cancel()         
+		close(shutdown)  
+		wg.Wait()        
 
 		mu.Lock()
 		defer mu.Unlock()
-
 		err := saveToJSON("results.json", pages)
 		if err != nil {
 			fmt.Println("Error saving:", err)
@@ -135,3 +142,5 @@ func setupCloseHandler() {
 		os.Exit(0)
 	}()
 }
+
+
