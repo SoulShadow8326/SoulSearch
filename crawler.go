@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+const saveEvery = 10
+
+var shutdown = make(chan struct{})
+var CrawlCount int
+
 func FetchHTML(url string) (string, error) {
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		url = "https://" + url
@@ -33,10 +38,14 @@ func FetchHTML(url string) (string, error) {
 	return string(body), nil
 }
 
-
 func Crawl(url string) {
-	fmt.Println("Entered Crawl() for:", url)
 	defer wg.Done()
+	select {
+	case <-shutdown:
+		return
+	default:
+	}
+	fmt.Println("Entered Crawl() for:", url)
 
 	mu.Lock()
 	if visited[url] {
@@ -58,13 +67,27 @@ func Crawl(url string) {
 	fmt.Println("Number of links found:", len(links))
 
 	mu.Lock()
-	pages = append(pages, PageData{URL: url, Links: links})
-	mu.Unlock()
+	if !urlAlreadySaved(url) {
+		pages = append(pages, PageData{URL: url, Links: links})
+	}
 
+	CrawlCount++
+	shouldSave := CrawlCount%saveEvery == 0
+	mu.Unlock()
+	if shouldSave {
+		fmt.Println("Checkpoint")
+		err := saveToJSON("results.json", pages)
+		if err != nil {
+			fmt.Println("error saving", err)
+		} else {
+			fmt.Println("checkpointed")
+		}
+	}
 	for _, link := range links {
 		if strings.HasPrefix(link, "/") {
 			continue
 		}
+
 		mu.Lock()
 		if visited[link] {
 			mu.Unlock()
@@ -74,24 +97,40 @@ func Crawl(url string) {
 		mu.Unlock()
 
 		wg.Add(1)
-		go Crawl(link)
+
+		go func(l string) {
+			select {
+			case <-shutdown:
+				wg.Done()
+				return
+			default:
+				Crawl(l)
+			}
+		}(link)
+
 	}
 }
 
 func setupCloseHandler() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
 	go func() {
 		<-c
-		fmt.Println("\nReceived interrupt. Saving progress...")
+		fmt.Println("signal interrupt")
+
+		close(shutdown)
+
+		wg.Wait()
 
 		mu.Lock()
 		defer mu.Unlock()
+
 		err := saveToJSON("results.json", pages)
 		if err != nil {
-			fmt.Println("Error saving JSON:", err)
+			fmt.Println("Error saving:", err)
 		} else {
-			fmt.Println("Saved crawl results to results.json ✅")
+			fmt.Println("Saved to results.json")
 		}
 		os.Exit(0)
 	}()
