@@ -21,3 +21,4 @@ server.log
 .DS_Store
 *.tmp
 results.json
+data/
