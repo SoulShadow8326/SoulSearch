@@ -9,7 +9,6 @@ A high-performance search engine built from scratch in pure Go. Features web cra
 - **PageRank Algorithm**: Link-based authority scoring
 - **Advanced Scoring**: Combines TF-IDF, PageRank, and position-based scoring
 - **Modern Web UI**: Responsive interface with real-time search
-- **REST API**: JSON API for programmatic access
 - **Pure Go**: No external dependencies, built with standard library only
 
 ## Architecture
@@ -28,22 +27,22 @@ A high-performance search engine built from scratch in pure Go. Features web cra
 
 ### 1. Build the application
 ```bash
-go build -o exsearch
+go build -o SoulSearch
 ```
 
 ### 2. Crawl websites
 ```bash
-./exsearch -mode=crawl -url="https://example.com" -max=1000
+./SoulSearch -mode=crawl -url="https://example.com" -max=1000
 ```
 
 ### 3. Build the search index
 ```bash
-./exsearch -mode=index
+./SoulSearch -mode=index
 ```
 
 ### 4. Start the search server
 ```bash
-./exsearch -mode=server -port=8080
+./SoulSearch -mode=server -port=8080
 ```
 
 ### 5. Search via web interface
@@ -54,55 +53,10 @@ Open http://localhost:8080 in your browser
 curl "http://localhost:8080/api/search?q=your+query&max=10"
 ```
 
-## Command Line Options
-
-```
--mode string
-    Operation mode: "server", "crawl", or "index" (default "server")
--port int
-    Server port (default 8080)
--url string
-    Starting URL for crawling
--max int
-    Maximum pages to crawl (default 1000)
-```
-
-## API Endpoints
-
-### Search API
-```
-GET /api/search?q=query&max=10
-```
-
-Response:
-```json
-{
-  "query": "search terms",
-  "results": [
-    {
-      "url": "https://example.com/page",
-      "title": "Page Title",
-      "snippet": "Highlighted snippet with <b>search</b> terms...",
-      "score": 0.95,
-      "rank": 1
-    }
-  ],
-  "total": 10,
-  "time_taken": "2.5ms"
-}
-```
-
-## Data Storage
-
-The search engine uses custom file-based storage:
-
-- `data/pages.dat`: Raw crawled pages
-- `data/terms.dat`: Inverted index with term frequencies
-- `data/docs.dat`: Document metadata and PageRank scores
 
 ## Scoring Algorithm
 
-ExSearch uses a sophisticated multi-factor scoring system:
+SoulSearch uses a sophisticated multi-factor scoring system:
 
 1. **Term Frequency (TF)**: How often query terms appear
 2. **PageRank**: Link-based authority score
@@ -117,19 +71,18 @@ ExSearch uses a sophisticated multi-factor scoring system:
 - **Indexing**: Processes 1000 documents in ~500ms
 - **Search**: Sub-10ms response times for most queries
 - **Memory**: Efficient inverted index structure
-- **Storage**: Compressed text-based data files
 
 ## Example Workflow
 
 ```bash
 # 1. Crawl a website
-./exsearch -mode=crawl -url="https://news.ycombinator.com" -max=500
+./SoulSearch -mode=crawl -url="https://news.ycombinator.com" -max=500
 
 # 2. Build the search index
-./exsearch -mode=index
+./SoulSearch -mode=index
 
 # 3. Start the search server
-./exsearch -mode=server -port=8080
+./SoulSearch -mode=server -port=8080
 
 # 4. Search via curl
 curl "http://localhost:8080/api/search?q=golang+programming"

@@ -5,41 +5,39 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 
 	"github.com/temoto/robotstxt"
 	"golang.org/x/net/html"
 )
 
 var robotsCache = make(map[string]*robotstxt.RobotsData)
-var robotsMu sync.Mutex
 
-func ExtractLinks(Pagehtml string, baseURL string) []string{
+func ExtractLinks(Pagehtml string, baseURL string) []string {
 	r := strings.NewReader(Pagehtml)
 	doc, err := html.Parse(r)
 	if err != nil {
-    	return []string{}
-}
+		return []string{}
+	}
 	var links []string
 	var VisitLinks func(n *html.Node)
-	VisitLinks = func(n *html.Node){
-		if n.Type == html.ElementNode && n.Data == "a"{
-			for _, attr := range n.Attr{
-				if attr.Key == "href"{
-				base, baseErr := url.Parse(baseURL)
-				href, hrefErr := url.Parse(attr.Val)
-				if hrefErr == nil && baseErr == nil {
-					absolute := base.ResolveReference(href)
-					links = append(links, absolute.String())
+	VisitLinks = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "a" {
+			for _, attr := range n.Attr {
+				if attr.Key == "href" {
+					base, baseErr := url.Parse(baseURL)
+					href, hrefErr := url.Parse(attr.Val)
+					if hrefErr == nil && baseErr == nil {
+						absolute := base.ResolveReference(href)
+						links = append(links, absolute.String())
+					}
 				}
 			}
 		}
+		if n.FirstChild != nil {
+			VisitLinks(n.FirstChild)
 		}
-	if n.FirstChild != nil{
-		VisitLinks(n.FirstChild)
-		}
-	if n.NextSibling != nil{
-		VisitLinks(n.NextSibling)
+		if n.NextSibling != nil {
+			VisitLinks(n.NextSibling)
 		}
 	}
 	VisitLinks(doc)
@@ -47,22 +45,22 @@ func ExtractLinks(Pagehtml string, baseURL string) []string{
 
 }
 
-func ExtractTitle(HtmlStr string, baseURL string) string{
+func ExtractTitle(HtmlStr string, baseURL string) string {
 	r := strings.NewReader(HtmlStr)
 	doc, err := html.Parse(r)
 	if err != nil {
-    	return ""
-}
+		return ""
+	}
 	var title string
 	var FindTitle func(n *html.Node)
-	FindTitle = func(n *html.Node){
-		if n.Type == html.ElementNode && n.Data == "title"{
-			if n.FirstChild != nil{
+	FindTitle = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "title" {
+			if n.FirstChild != nil {
 				title = n.FirstChild.Data
 			}
-			return 
+			return
 		}
-		for c:= n.FirstChild; c!= nil; c = c.NextSibling{
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			FindTitle(c)
 		}
 	}
@@ -70,26 +68,26 @@ func ExtractTitle(HtmlStr string, baseURL string) string{
 	return title
 }
 
-func Respect(rawurl string) *robotstxt.RobotsData{
+func Respect(rawurl string) *robotstxt.RobotsData {
 	parsedURL, err := url.Parse(rawurl)
-	if err != nil{
+	if err != nil {
 		return nil
 	}
 	robotsURL := parsedURL.Scheme + "://" + parsedURL.Host + "/robots.txt"
-	if cached, ok := robotsCache[parsedURL.Host]; ok{
+	if cached, ok := robotsCache[parsedURL.Host]; ok {
 		return cached
 	}
 	resp, err := http.Get(robotsURL)
-	if err != nil{
+	if err != nil {
 		return nil
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
-	if err != nil{
+	if err != nil {
 		return nil
 	}
 	robots, err := robotstxt.FromStatusAndBytes(resp.StatusCode, body)
-	if err != nil{
+	if err != nil {
 		return nil
 	}
 	robotsCache[parsedURL.Host] = robots

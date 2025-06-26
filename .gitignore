@@ -2,7 +2,7 @@
 soulsearch
 crawler-client
 /tmp/soulsearch.sock
-/tmp/exsearch.sock
+/tmp/SoulSearch.sock
 *.sock
 frontend/node_modules
 frontend/build
@@ -22,3 +22,4 @@ server.log
 *.tmp
 results.json
 data/
+english-wordnet-2024.xml.gz
