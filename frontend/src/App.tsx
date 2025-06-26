@@ -86,7 +86,7 @@ function App() {
     
     try {
       console.log('Performing search for:', searchQuery);
-      const response = await fetch(`http://localhost:8080/api/dynamic-search?q=${encodeURIComponent(searchQuery)}`);
+      const response = await fetch(`http://localhost:8080/search?q=${encodeURIComponent(searchQuery)}`);
       console.log('Search response status:', response.status);
       
       if (!response.ok) throw new Error(`Search failed with status: ${response.status}`);
@@ -97,12 +97,12 @@ function App() {
         console.log('Search data received:', data);
         
         const cleanedResults = (data.results || []).map(result => ({
-          ...result,
           title: decodeText(result.title || ''),
           snippet: decodeText(result.snippet || ''),
-          url: result.url || ''
+          url: result.url || '',
+          score: result.score ?? 0
         }));
-        
+
         setResults(cleanedResults);
         setLoading(false);
         setDominoEffect(false); 
@@ -431,38 +431,31 @@ function App() {
   const gridWidth = GRID_COLS * boxWidth + (GRID_COLS - 1) * gap;
   const gridHeight = GRID_ROWS * boxHeight + (GRID_ROWS - 1) * gap;
 
-  // Function to decode Unicode escape sequences and clean up text
   const decodeText = (text: string): string => {
     if (!text) return '';
     
     try {
       let decoded = text;
       
-      // Handle JSON-escaped characters
       decoded = decoded.replace(/\\"/g, '"');
       decoded = decoded.replace(/\\'/g, "'");
       decoded = decoded.replace(/\\n/g, ' ');
       decoded = decoded.replace(/\\r/g, ' ');
       decoded = decoded.replace(/\\t/g, ' ');
       
-      // Decode Unicode escape sequences
       decoded = decoded.replace(/\\u([0-9a-fA-F]{4})/g, (match, p1) => {
         return String.fromCharCode(parseInt(p1, 16));
       });
       
-      // Remove HTML tags more aggressively
       decoded = decoded.replace(/<\/?[^>]+(>|$)/g, '');
       decoded = decoded.replace(/&[a-zA-Z0-9#]+;/g, ' ');
       
-      // Remove common HTML artifacts
       decoded = decoded.replace(/\s*-\s*Search results\s*-\s*/gi, ' - ');
       decoded = decoded.replace(/Word stemming is applied/gi, '');
       decoded = decoded.replace(/TOP RESULT/gi, '');
       
-      // Clean up extra whitespace
       decoded = decoded.replace(/\s+/g, ' ').trim();
       
-      // Remove remaining backslashes that are artifacts
       decoded = decoded.replace(/\\+/g, '');
       
       return decoded;
@@ -605,7 +598,8 @@ function App() {
                     padding: '4px 8px',
                     boxShadow: '2px 2px 0px rgba(0,0,0,0.2)'
                   }}>
-                    {results[0].score.toFixed(2)}
+                    {typeof results[0]?.score === 'number' ? results[0].score.toFixed(2) : 'N/A'}
+                    console.log("Mapped search result:", result);
                   </div>
                 </div>
               </div>
@@ -699,7 +693,7 @@ function App() {
                           padding: '2px 4px',
                           boxShadow: '1px 1px 0px rgba(0,0,0,0.2)'
                         }}>
-                          {result.score.toFixed(2)}
+                          {typeof result.score === 'number' ? result.score.toFixed(2) : 'N/A'}
                         </div>
                       </div>
                     </div>
