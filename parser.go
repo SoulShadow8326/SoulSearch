@@ -28,7 +28,10 @@ func ExtractLinks(Pagehtml string, baseURL string) []string {
 					href, hrefErr := url.Parse(attr.Val)
 					if hrefErr == nil && baseErr == nil {
 						absolute := base.ResolveReference(href)
-						links = append(links, absolute.String())
+						absolute.Fragment = "" 
+						absolute.RawQuery = "" 
+						clean := absolute.String()
+						links = append(links, clean)
 					}
 				}
 			}
@@ -93,3 +96,13 @@ func Respect(rawurl string) *robotstxt.RobotsData {
 	robotsCache[parsedURL.Host] = robots
 	return robots
 }
+
+func AllowedByRobots(url string) bool {
+	robots := Respect(url)
+	if robots == nil {
+		return true 
+	}
+	group := robots.FindGroup("SoulSearchBot")
+	return group.Test(url)
+}
+

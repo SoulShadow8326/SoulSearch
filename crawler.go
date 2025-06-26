@@ -6,98 +6,74 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"log"
 )
-import uarel "net/url"
 
 var visited = make(map[string]bool)
-var pages []PageData
-var mu sync.Mutex
 var wg sync.WaitGroup
-var semaphore = make(chan struct{}, 64)
-var hostAccess = make(map[string]time.Time)
-var hostMu sync.Mutex
 
-const politeDelay = 5 * time.Second
+func Crawl() {
+	for {
+		rows, err := DB.Query(`SELECT url FROM pages WHERE crawled = 0 LIMIT 64`)
+		if err != nil {
+			log.Println("Failed to fetch uncrawled pages:", err)
+			return
+		}
 
-func Crawl(url string) {
-	queue := []string{url}
-	for len(queue) > 0 {
-		var nextWave []string
+		var urls []string
+		for rows.Next() {
+			var url string
+			if err := rows.Scan(&url); err == nil {
+				urls = append(urls, url)
+			}
+		}
+		rows.Close()
 
-		for _, u := range queue {
+		if len(urls) == 0 {
+			log.Println("No more URLs to crawl.")
+			return
+		}
+
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 64)
+
+		for _, url := range urls {
 			wg.Add(1)
-			semaphore <- struct{}{}
+			sem <- struct{}{}
 
 			go func(link string) {
 				defer wg.Done()
-				defer func() { <-semaphore }()
+				defer func() { <-sem }()
 
-				robots := Respect(link)
-				if robots != nil {
-					group := robots.FindGroup("SoulSearchBot")
-					if !group.Test(link) {
-						return
-					}
-				}
-				parsed, err := uarel.Parse(link)
-				if err != nil {
+				if !AllowedByRobots(link) {
 					return
 				}
-				host := parsed.Host
-				hostMu.Lock()
-				last := hostAccess[host]
-				wait := time.Until(last.Add(politeDelay))
-				if wait > 0 {
-					hostMu.Unlock()
-					time.Sleep(wait)
-					hostMu.Lock()
-				}
-				hostAccess[host] = time.Now()
-				hostMu.Unlock()
 
 				html, err := FetchHTML(link)
 				if err != nil {
 					return
 				}
 
-				mu.Lock()
-				if visited[link] {
-					mu.Unlock()
-					return
-				}
-				visited[link] = true
-				mu.Unlock()
-
 				links := ExtractLinks(html, link)
 
 				page := PageData{
-					URL:      link,
-					Title:    ExtractTitle(html, link),
-					Content:  html,
-					LinkList: links,
+					URL:     link,
+					Title:   ExtractTitle(html, link),
+					Content: html,
 				}
+
 				_ = StorePageData(page)
-				_ = StoreLinks(page.URL, page.LinkList)
+				QueueLinks(links)
 
-				mu.Lock()
-				pages = append(pages, page)
-				mu.Unlock()
-
-				for _, l := range links {
-					mu.Lock()
-					if !visited[l] {
-						nextWave = append(nextWave, l)
-					}
-					mu.Unlock()
-				}
-
-			}(u)
+				log.Println("crawled:", link)
+			}(url)
 		}
 
 		wg.Wait()
-		queue = nextWave
 	}
 }
+
+
 
 func FetchHTML(url string) (string, error) {
 	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {

@@ -96,7 +96,6 @@ function App() {
         const data: SearchResponse = await response.json();
         console.log('Search data received:', data);
         
-        // Clean up the results text
         const cleanedResults = (data.results || []).map(result => ({
           ...result,
           title: decodeText(result.title || ''),
@@ -106,7 +105,7 @@ function App() {
         
         setResults(cleanedResults);
         setLoading(false);
-        setDominoEffect(false); // Stop domino effect when results are ready
+        setDominoEffect(false); 
       } else {
         throw new Error('Expected JSON response but got: ' + contentType);
       }
@@ -123,7 +122,6 @@ function App() {
     e.preventDefault();
     setShowSuggestions(false);
     
-    // Trigger domino effect and start search immediately
     setDominoEffect(true);
     performSearch(query);
   };
@@ -156,20 +154,17 @@ function App() {
   const handleTileClick = (row: number, col: number) => {
     const tileKey = `${row}-${col}`;
     
-    // Don't allow clicking already falling tiles
     if (fallingTiles.has(tileKey)) return;
     
-    // Add to falling tiles set
     setFallingTiles(prev => new Set(prev).add(tileKey));
     
-    // Remove from falling tiles after animation completes
     setTimeout(() => {
       setFallingTiles(prev => {
         const newSet = new Set(prev);
         newSet.delete(tileKey);
         return newSet;
       });
-    }, 800); // Match the 0.8s animation duration
+    }, 800); 
   };
 
   const GRID_COLS = dimensions.width < 768 ? 6 : 8;
@@ -366,7 +361,6 @@ function App() {
         
         if ((isTitle || isSearch) && col > (GRID_COLS === 6 ? 1 : 2)) continue;
         
-        // Calculate domino effect delay and scale
         const isDominoRow = dominoEffect && (row === (GRID_ROWS === 7 ? 4 : 3) || row === (GRID_ROWS === 7 ? 5 : 4));
         const tileKey = `${row}-${col}`;
         const isFalling = fallingTiles.has(tileKey);
