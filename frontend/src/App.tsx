@@ -97,10 +97,10 @@ function App() {
         console.log('Search data received:', data);
         
         const cleanedResults = (data.results || []).map(result => ({
-          title: decodeText(result.title || ''),
-          snippet: decodeText(result.snippet || ''),
-          url: result.url || '',
-          score: result.score ?? 0
+          title: typeof result.title === 'string' && result.title.trim() !== '' ? result.title : result.url,
+          snippet: typeof result.snippet === 'string' && result.snippet.trim() !== '' ? result.snippet : result.url,
+          url: typeof result.url === 'string' ? result.url : '',
+          score: typeof result.score === 'number' && isFinite(result.score) ? result.score : 0
         }));
 
         setResults(cleanedResults);
@@ -557,9 +557,13 @@ function App() {
                   lineHeight: 1.2,
                   marginBottom: '12px',
                   textShadow: '2px 2px 0px rgba(41,119,245,0.2)',
-                  textAlign: 'center'
+                  textAlign: 'center',
+                  wordBreak: 'break-word',
+                  overflowWrap: 'break-word',
+                  maxHeight: '60px',
+                  overflow: 'auto'
                 }}>
-                  {results[0].title}
+                  {results[0].title || results[0].url}
                 </div>
                 <div style={{
                   color: '#444',
@@ -568,9 +572,13 @@ function App() {
                   lineHeight: 1.4,
                   marginBottom: '16px',
                   textAlign: 'center',
-                  fontWeight: 500
+                  fontWeight: 500,
+                  wordBreak: 'break-word',
+                  overflowWrap: 'break-word',
+                  maxHeight: '80px',
+                  overflow: 'auto'
                 }}>
-                  {results[0].snippet}
+                  {results[0].snippet || results[0].url}
                 </div>
                 <div style={{
                   display: 'flex',
@@ -599,7 +607,6 @@ function App() {
                     boxShadow: '2px 2px 0px rgba(0,0,0,0.2)'
                   }}>
                     {typeof results[0]?.score === 'number' ? results[0].score.toFixed(2) : 'N/A'}
-                    console.log("Mapped search result:", result);
                   </div>
                 </div>
               </div>
