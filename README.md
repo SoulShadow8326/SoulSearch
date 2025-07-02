@@ -1,6 +1,6 @@
 # SoulSearch
 
-A high-performance search engine built from scratch in pure Go. Features web crawling, custom indexing, PageRank algorithm, and a modern web interface.
+SoulSearch is a semantic web search engine written in pure Go. It performs polite, concurrent crawling of the web, builds an inverted index, computes PageRank periodically, and exposes HTTP endpoints for semantic search.
 
 ## Features
 
@@ -8,39 +8,31 @@ A high-performance search engine built from scratch in pure Go. Features web cra
 - **Custom Indexer**: Term frequency analysis with stop word filtering
 - **PageRank Algorithm**: Link-based authority scoring
 - **Advanced Scoring**: Combines TF-IDF, PageRank, and position-based scoring
-- **Modern Web UI**: Responsive interface with real-time search
 - **Pure Go**: No external dependencies, built with standard library only
 
 ## Usage
 
-### 1. Build the application
+
+## Running the Backend
+
+### Requirements
+
+- Go 1.20 or higher
+- SQLite3
+- Node.js (for frontend)
+- Git
+
 ```bash
-go build -o SoulSearch
+git clone https://github.com/SoulShadow8326/soulsearch
+cd soulsearch
+go run .
 ```
-
-### 2. Crawl websites
+## running the frontend
 ```bash
-./SoulSearch -mode=crawl -url="https://example.com" -max=1000
+cd frontend
+npm install
+npm run dev
 ```
-
-### 3. Build the search index
-```bash
-./SoulSearch -mode=index
-```
-
-### 4. Start the search server
-```bash
-./SoulSearch -mode=server -port=8080
-```
-
-### 5. Search via web interface
-Open http://localhost:8080 in your browser
-
-### 6. Search via API
-```bash
-curl "http://localhost:8080/api/search?q=your+query&max=10"
-```
-
 
 ## Scoring Algorithm
 
