@@ -3,11 +3,12 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
 
-var crawlEnabled = true 
+var crawlEnabled = false
 
 func main() {
 	InitDB()
@@ -36,6 +37,25 @@ func main() {
 	http.HandleFunc("/api/dynamic-search", handleSearch)
 	http.HandleFunc("/api/suggestions", handleSuggestions)
 
+	fs := http.FileServer(http.Dir("./frontend/build"))
+	http.Handle("/static/", fs)
+	http.Handle("/asset-manifest.json", fs)
+	http.Handle("/favicon.ico", fs)
+	http.Handle("/manifest.json", fs)
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/search") || strings.HasPrefix(r.URL.Path, "/crawl") {
+			http.NotFound(w, r)
+			return
+		}
+		indexPath := "./frontend/build/index.html"
+		if _, err := os.Stat(indexPath); err == nil {
+			http.ServeFile(w, r, indexPath)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
 	go func() {
 		if err := http.ListenAndServe(":8080", nil); err != nil {
 			panic(err)
@@ -57,9 +77,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 
 	response := struct {
-		Results   []SearchResult `json:"results"`
-		Total     int            `json:"total"`
-		TimeTaken string         `json:"time_taken"`
+		Results []SearchResult `json:"results"`
+		Total int `json:"total"`
+		TimeTaken string `json:"time_taken"`
 	}{
 		Results:   results,
 		Total:     len(results),
@@ -67,7 +87,6 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -93,7 +112,6 @@ func handleSuggestions(w http.ResponseWriter, r *http.Request) {
 	query := strings.ToLower(r.URL.Query().Get("q"))
 	if query == "" || len(query) < 2 {
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
 		json.NewEncoder(w).Encode(struct {
 			Suggestions []string `json:"suggestions"`
 		}{Suggestions: []string{}})
@@ -116,7 +134,6 @@ func handleSuggestions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	json.NewEncoder(w).Encode(struct {
 		Suggestions []string `json:"suggestions"`
 	}{

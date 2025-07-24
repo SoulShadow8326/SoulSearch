@@ -19,7 +19,6 @@ function App() {
   const [showContent, setShowContent] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   const [mode, setMode] = useState<'home' | 'results'>('home');
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -54,7 +53,7 @@ function App() {
     }
     
     try {
-      const response = await fetch(`http://localhost:8080/api/suggestions?q=${encodeURIComponent(searchQuery)}`);
+      const response = await fetch(`/api/suggestions?q=${encodeURIComponent(searchQuery)}`);
       if (response.ok) {
         const contentType = response.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
@@ -82,12 +81,11 @@ function App() {
     if (!searchQuery.trim()) return;
     
     setLoading(true);
-    setError('');
     setMode('results');
     
     try {
       console.log('Performing search for:', searchQuery);
-      const response = await fetch(`http://localhost:8080/search?q=${encodeURIComponent(searchQuery)}`);
+      const response = await fetch(`/search?q=${encodeURIComponent(searchQuery)}`);
       console.log('Search response status:', response.status);
       
       if (!response.ok) throw new Error(`Search failed with status: ${response.status}`);
@@ -97,11 +95,11 @@ function App() {
         const data: SearchResponse = await response.json();
         console.log('Search data received:', data);
         
-        const cleanedResults = (data.results || []).map(result => ({
-          title: typeof result.title === 'string' && result.title.trim() !== '' ? result.title : result.url,
-          snippet: typeof result.snippet === 'string' && result.snippet.trim() !== '' ? result.snippet : result.url,
-          url: typeof result.url === 'string' ? result.url : '',
-          score: typeof result.score === 'number' && isFinite(result.score) ? result.score : 0
+        const cleanedResults = (data.results || []).map((result: any) => ({
+          title: typeof result.Title === 'string' && result.Title.trim() !== '' ? result.Title : result.URL,
+          snippet: typeof result.Snippet === 'string' && result.Snippet.trim() !== '' ? result.Snippet : result.URL,
+          url: typeof result.URL === 'string' ? result.URL : '',
+          score: typeof result.Score === 'number' && isFinite(result.Score) ? result.Score : 0
         }));
 
         setResults(cleanedResults);
@@ -111,10 +109,9 @@ function App() {
         throw new Error('Expected JSON response but got: ' + contentType);
       }
     } catch (err) {
-      setError('Search failed. Please try again.');
       console.error('Search error:', err);
       setLoading(false);
-      setDominoEffect(false); // Stop domino effect on error
+      setDominoEffect(false); 
       setMode('home');
     }
   }, []);
@@ -145,7 +142,6 @@ function App() {
     setMode('home');
     setResults([]);
     setQuery('');
-    setError('');
     setSuggestions([]);
     setShowSuggestions(false);
     setLoading(false);
@@ -257,17 +253,6 @@ function App() {
               justifyContent: 'center'
             }}>
             <form onSubmit={handleSubmit} style={{ width: '100%', maxWidth: '85%' }}>
-              {error && (
-                <div style={{
-                  color: '#e74c3c',
-                  fontSize: 11,
-                  marginBottom: 6,
-                  textAlign: 'center',
-                  fontFamily: 'monospace'
-                }}>
-                  {error}
-                </div>
-              )}
               <input
                 type="text"
                 value={query}
@@ -407,15 +392,12 @@ function App() {
             }}
             onClick={() => {
               if (content && (isTitle || isSearch)) {
-                // Handle title or search box click
                 if (isTitle) {
                   goHome();
                 }
               } else if (content && isResultArea) {
-                // Handle result area click
                 window.open(results[0].url, '_blank', 'noopener,noreferrer');
               } else if (!content && !isFalling) {
-                // Handle background tile click for falling effect
                 handleTileClick(row, col);
               }
             }}
@@ -474,364 +456,325 @@ function App() {
       position: 'relative',
       background: '#fff'
     }}>
-      {showVercelPopup && (
       <div style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100vw',
-        background: '#DC143C',
-        color: '#fff',
-        fontWeight: 700,
-        fontFamily: 'monospace',
-        fontSize: 16,
-        zIndex: 2000,
-        padding: '18px 24px',
-        textAlign: 'center',
-        boxShadow: '0 4px 24px rgba(220,20,60,0.15)',
-        letterSpacing: 0.2,
-        lineHeight: 1.5
+        position: 'absolute',
+        width: gridWidth,
+        height: gridHeight,
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)'
       }}>
-        if you are seeing this on vercel, the backend is not running due to the fact the demo is frontend ONLY. i DO NOT possess the resources to host a search engine while it is being shipped. locally installing and running cd frontend/ and then running npm start whilst running go run . in another terminal is the only way for the search engine to truly work. backend will have to be opened seperately in its own http://localhost:8080/search v2 will hook the frontend and backend up
-        <button
-          style={{
-            marginLeft: 24,
-            background: '#fff',
-            color: '#DC143C',
-            border: 'none',
-            borderRadius: 4,
-            fontWeight: 700,
-            fontFamily: 'monospace',
-            fontSize: 14,
-            padding: '6px 18px',
-            cursor: 'pointer',
-            boxShadow: '0 2px 8px rgba(220,20,60,0.08)'
-          }}
-          onClick={() => setShowVercelPopup(false)}
-        >
-          close
-        </button>
+        {createGrid()}
       </div>
-    )}
-    <div style={{
-      position: 'absolute',
-      width: gridWidth,
-      height: gridHeight,
-      top: '50%',
-      left: '50%',
-      transform: 'translate(-50%, -50%)'
-    }}>
-      {createGrid()}
-    </div>
-    
-    {mode === 'results' && !loading && results.length > 0 && (
-      <div style={{
-        position: 'fixed',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        height: '50vh',
-        background: 'linear-gradient(180deg, #e8f0fe 0%, #f8f9fa 50%, #ffffff 100%)',
-        border: '4px solid #2977F5',
-        borderBottom: 'none',
-        padding: '20px',
-        zIndex: 1000,
-        animation: 'slideUp 0.5s ease-out',
-        boxShadow: '0 -8px 0px rgba(41,119,245,0.3)',
-        display: 'flex',
-        flexDirection: 'column'
-      }}>
+      
+      {mode === 'results' && !loading && results.length > 0 && (
         <div style={{
-          color: '#2977F5',
-          fontSize: '24px',
-          fontWeight: 800,
-          fontFamily: 'Trebuchet MS, monospace',
-          marginBottom: '20px',
-          textAlign: 'center',
-          textShadow: '2px 2px 0px rgba(41,119,245,0.2)'
-        }}>
-          SEARCH RESULTS
-        </div>
-        
-        <div style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: '50vh',
+          background: 'linear-gradient(180deg, #e8f0fe 0%, #f8f9fa 50%, #ffffff 100%)',
+          border: '4px solid #2977F5',
+          borderBottom: 'none',
+          padding: '20px',
+          zIndex: 1000,
+          animation: 'slideUp 0.5s ease-out',
+          boxShadow: '0 -8px 0px rgba(41,119,245,0.3)',
           display: 'flex',
-          gap: '20px',
-          height: 'calc(100% - 120px)',
-          maxWidth: '1400px',
-          margin: '0 auto',
-          width: '100%',
-          padding: '0 20px',
-          justifyContent: 'center'
-        }}>
-          {results[0] && (
-            <div style={{
-              flex: '0 0 50%',
-              background: '#fff',
-              border: '4px solid #2977F5',
-              padding: '20px',
-              cursor: 'pointer',
-              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-              boxShadow: '6px 6px 0px rgba(41,119,245,0.3)',
-              transform: 'translate(0, 0)',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'center'
-            }}
-            onClick={() => window.open(results[0].url, '_blank', 'noopener,noreferrer')}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translate(-5px, -5px) scale(1.02) rotate(-0.5deg)';
-              e.currentTarget.style.boxShadow = '12px 12px 0px rgba(41,119,245,0.5)';
-              e.currentTarget.style.background = 'linear-gradient(135deg, #f8f9fa, #e6f3ff)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translate(0, 0) scale(1) rotate(0deg)';
-              e.currentTarget.style.boxShadow = '6px 6px 0px rgba(41,119,245,0.3)';
-              e.currentTarget.style.background = '#fff';
-            }}
-            >
-              <div style={{
-                color: '#2977F5',
-                fontWeight: 800,
-                fontSize: '20px',
-                fontFamily: 'Trebuchet MS, monospace',
-                lineHeight: 1.2,
-                marginBottom: '12px',
-                textShadow: '2px 2px 0px rgba(41,119,245,0.2)',
-                textAlign: 'center',
-                wordBreak: 'break-word',
-                overflowWrap: 'break-word',
-                maxHeight: '60px',
-                overflow: 'auto'
-              }}>
-                {results[0].title || results[0].url}
-              </div>
-              <div style={{
-                color: '#444',
-                fontSize: '14px',
-                fontFamily: 'monospace',
-                lineHeight: 1.4,
-                marginBottom: '16px',
-                textAlign: 'center',
-                fontWeight: 500,
-                wordBreak: 'break-word',
-                overflowWrap: 'break-word',
-                maxHeight: '80px',
-                overflow: 'auto'
-              }}>
-                {results[0].snippet || results[0].url}
-              </div>
-              <div style={{
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center',
-                gap: '16px',
-                borderTop: '3px solid #2977F5',
-                paddingTop: '12px'
-              }}>
-                <div style={{
-                  color: '#2977F5',
-                  fontSize: '12px',
-                  fontFamily: 'monospace',
-                  fontWeight: 700,
-                  textTransform: 'uppercase'
-                }}>
-                  TOP RESULT
-                </div>
-                <div style={{
-                  color: '#fff',
-                  fontSize: '12px',
-                  fontFamily: 'monospace',
-                  fontWeight: 600,
-                  background: '#2977F5',
-                  padding: '4px 8px',
-                  boxShadow: '2px 2px 0px rgba(0,0,0,0.2)'
-                }}>
-                  {typeof results[0]?.score === 'number' ? results[0].score.toFixed(2) : 'N/A'}
-                </div>
-              </div>
-            </div>
-          )}
-          
-          {results.length > 1 && (
-            <div style={{
-              flex: '0 0 50%',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '12px',
-              overflowY: 'hidden'
-            }}>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '12px',
-                height: '100%',
-                alignContent: 'start'
-              }}>
-                {results.slice(1, 5).map((result, index) => (
-                  <div
-                    key={index + 1}
-                    style={{
-                      background: '#f8f9fa',
-                      border: '3px solid #2977F5',
-                      padding: '12px',
-                      cursor: 'pointer',
-                      boxShadow: '3px 3px 0px rgba(41,119,245,0.3)',
-                      transform: 'translate(0, 0)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      minHeight: '120px'
-                    }}
-                    onClick={() => window.open(result.url, '_blank', 'noopener,noreferrer')}
-                  >
-                    <div style={{
-                      color: '#2977F5',
-                      fontWeight: 800,
-                      fontSize: '14px',
-                      fontFamily: 'Trebuchet MS, monospace',
-                      lineHeight: 1.2,
-                      marginBottom: '6px',
-                      textShadow: '1px 1px 0px rgba(41,119,245,0.2)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      display: '-webkit-box',
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: 'vertical'
-                    }}>
-                      {result.title}
-                    </div>
-                    <div style={{
-                      color: '#666',
-                      fontSize: '11px',
-                      fontFamily: 'monospace',
-                      lineHeight: 1.3,
-                      marginBottom: '8px',
-                      fontWeight: 500,
-                      flex: 1,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      display: '-webkit-box',
-                      WebkitLineClamp: 3,
-                      WebkitBoxOrient: 'vertical'
-                    }}>
-                      {result.snippet}
-                    </div>
-                    <div style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      borderTop: '2px solid #2977F5',
-                      paddingTop: '6px'
-                    }}>
-                      <div style={{
-                        color: '#2977F5',
-                        fontSize: '9px',
-                        fontFamily: 'monospace',
-                        fontWeight: 700,
-                        textTransform: 'uppercase'
-                      }}>
-                        #{index + 2}
-                      </div>
-                      <div style={{
-                        color: '#fff',
-                        fontSize: '9px',
-                        fontFamily: 'monospace',
-                        fontWeight: 600,
-                        background: '#2977F5',
-                        padding: '2px 4px',
-                        boxShadow: '1px 1px 0px rgba(0,0,0,0.2)'
-                      }}>
-                        {typeof result.score === 'number' ? result.score.toFixed(2) : 'N/A'}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {results.length > 5 && (
-                <div style={{
-                  background: '#2977F5',
-                  color: '#fff',
-                  padding: '8px',
-                  textAlign: 'center',
-                  fontFamily: 'Trebuchet MS, monospace',
-                  fontWeight: 800,
-                  fontSize: '12px',
-                  boxShadow: '3px 3px 0px rgba(0,0,0,0.3)',
-                  textShadow: '1px 1px 0px rgba(0,0,0,0.3)'
-                }}>
-                  +{results.length - 5} MORE RESULTS
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        
-        <div style={{
-          marginTop: 'auto',
-          textAlign: 'center',
-          paddingTop: '16px'
-        }}>
-          <button
-            onClick={goHome}
-            className="back-to-home-button"
-          >
-            ← BACK TO HOME
-          </button>
-        </div>
-      </div>
-    )}
-    
-    {mode === 'results' && !loading && results.length === 0 && (
-      <div style={{
-        position: 'fixed',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        height: '20vh',
-        background: 'linear-gradient(180deg, #ffebee 0%, #f8f9fa 50%, #ffffff 100%)',
-        border: '4px solid #DC143C',
-        borderBottom: 'none',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-        animation: 'slideUp 0.5s ease-out',
-        boxShadow: '0 -8px 0px rgba(220,20,60,0.3)'
-      }}>
-        <div style={{ 
-          textAlign: 'center',
-          background: '#fff',
-          padding: '24px 32px',
-          boxShadow: '6px 6px 0px rgba(0,0,0,0.3)',
-          border: 'none'
+          flexDirection: 'column'
         }}>
           <div style={{
-            color: '#6C63FF',
+            color: '#2977F5',
             fontSize: '24px',
             fontWeight: 800,
             fontFamily: 'Trebuchet MS, monospace',
-            marginBottom: '8px',
-            textShadow: '2px 2px 0px rgba(108,99,255,0.2)'
+            marginBottom: '20px',
+            textAlign: 'center',
+            textShadow: '2px 2px 0px rgba(41,119,245,0.2)'
           }}>
-            NO RESULTS FOUND
+            SEARCH RESULTS
           </div>
+          
           <div style={{
-            color: '#666',
-            fontSize: '16px',
-            fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            fontWeight: 500,
-            marginBottom: '16px'
+            display: 'flex',
+            gap: '20px',
+            height: 'calc(100% - 120px)',
+            maxWidth: '1400px',
+            margin: '0 auto',
+            width: '100%',
+            padding: '0 20px',
+            justifyContent: 'center'
           }}>
-            The sloth bear couldn't find anything. Try different keywords!
+            {results[0] && (
+              <div style={{
+                flex: '0 0 50%',
+                background: '#fff',
+                border: '4px solid #2977F5',
+                padding: '20px',
+                cursor: 'pointer',
+                transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                boxShadow: '6px 6px 0px rgba(41,119,245,0.3)',
+                transform: 'translate(0, 0)',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center'
+              }}
+              onClick={() => window.open(results[0].url, '_blank', 'noopener,noreferrer')}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translate(-5px, -5px) scale(1.02) rotate(-0.5deg)';
+                e.currentTarget.style.boxShadow = '12px 12px 0px rgba(41,119,245,0.5)';
+                e.currentTarget.style.background = 'linear-gradient(135deg, #f8f9fa, #e6f3ff)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translate(0, 0) scale(1) rotate(0deg)';
+                e.currentTarget.style.boxShadow = '6px 6px 0px rgba(41,119,245,0.3)';
+                e.currentTarget.style.background = '#fff';
+              }}
+              >
+                <div style={{
+                  color: '#2977F5',
+                  fontWeight: 800,
+                  fontSize: '20px',
+                  fontFamily: 'Trebuchet MS, monospace',
+                  lineHeight: 1.2,
+                  marginBottom: '12px',
+                  textShadow: '2px 2px 0px rgba(41,119,245,0.2)',
+                  textAlign: 'center',
+                  wordBreak: 'break-word',
+                  overflowWrap: 'break-word',
+                  maxHeight: '60px',
+                  overflow: 'auto'
+                }}>
+                  {results[0].title || results[0].url}
+                </div>
+                <div style={{
+                  color: '#444',
+                  fontSize: '14px',
+                  fontFamily: 'monospace',
+                  lineHeight: 1.4,
+                  marginBottom: '16px',
+                  textAlign: 'center',
+                  fontWeight: 500,
+                  wordBreak: 'break-word',
+                  overflowWrap: 'break-word',
+                  maxHeight: '80px',
+                  overflow: 'auto'
+                }}>
+                  {results[0].snippet || results[0].url}
+                </div>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  gap: '16px',
+                  borderTop: '3px solid #2977F5',
+                  paddingTop: '12px'
+                }}>
+                  <div style={{
+                    color: '#2977F5',
+                    fontSize: '12px',
+                    fontFamily: 'monospace',
+                    fontWeight: 700,
+                    textTransform: 'uppercase'
+                  }}>
+                    TOP RESULT
+                  </div>
+                  <div style={{
+                    color: '#fff',
+                    fontSize: '12px',
+                    fontFamily: 'monospace',
+                    fontWeight: 600,
+                    background: '#2977F5',
+                    padding: '4px 8px',
+                    boxShadow: '2px 2px 0px rgba(0,0,0,0.2)'
+                  }}>
+                    {typeof results[0]?.score === 'number' && isFinite(results[0]?.score) ? results[0].score.toFixed(2) : 'N/A'}
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {results.length > 1 && (
+              <div style={{
+                flex: '0 0 50%',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+                overflowY: 'hidden'
+              }}>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '12px',
+                  height: '100%',
+                  alignContent: 'start'
+                }}>
+                  {results.slice(1, 5).map((result, index) => (
+                    <div
+                      key={index + 1}
+                      style={{
+                        background: '#f8f9fa',
+                        border: '3px solid #2977F5',
+                        padding: '12px',
+                        cursor: 'pointer',
+                        boxShadow: '3px 3px 0px rgba(41,119,245,0.3)',
+                        transform: 'translate(0, 0)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        minHeight: '120px'
+                      }}
+                      onClick={() => window.open(result.url, '_blank', 'noopener,noreferrer')}
+                    >
+                      <div style={{
+                        color: '#2977F5',
+                        fontWeight: 800,
+                        fontSize: '14px',
+                        fontFamily: 'Trebuchet MS, monospace',
+                        lineHeight: 1.2,
+                        marginBottom: '6px',
+                        textShadow: '1px 1px 0px rgba(41,119,245,0.2)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical'
+                      }}>
+                        {result.title}
+                      </div>
+                      <div style={{
+                        color: '#666',
+                        fontSize: '11px',
+                        fontFamily: 'monospace',
+                        lineHeight: 1.3,
+                        marginBottom: '8px',
+                        fontWeight: 500,
+                        flex: 1,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 3,
+                        WebkitBoxOrient: 'vertical'
+                      }}>
+                        {result.snippet}
+                      </div>
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        borderTop: '2px solid #2977F5',
+                        paddingTop: '6px'
+                      }}>
+                        <div style={{
+                          color: '#2977F5',
+                          fontSize: '9px',
+                          fontFamily: 'monospace',
+                          fontWeight: 700,
+                          textTransform: 'uppercase'
+                        }}>
+                          #{index + 2}
+                        </div>
+                        <div style={{
+                          color: '#fff',
+                          fontSize: '9px',
+                          fontFamily: 'monospace',
+                          fontWeight: 600,
+                          background: '#2977F5',
+                          padding: '2px 4px',
+                          boxShadow: '1px 1px 0px rgba(0,0,0,0.2)'
+                        }}>
+                          {typeof result.score === 'number' && isFinite(result.score) ? result.score.toFixed(2) : 'N/A'}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {results.length > 5 && (
+                  <div style={{
+                    background: '#2977F5',
+                    color: '#fff',
+                    padding: '8px',
+                    textAlign: 'center',
+                    fontFamily: 'Trebuchet MS, monospace',
+                    fontWeight: 800,
+                    fontSize: '12px',
+                    boxShadow: '3px 3px 0px rgba(0,0,0,0.3)',
+                    textShadow: '1px 1px 0px rgba(0,0,0,0.3)'
+                  }}>
+                    +{results.length - 5} MORE RESULTS
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-          <button
-            onClick={goHome}
-            className="back-to-home-button-no-results"
-          >
-            ← BACK TO HOME
-          </button>
+          
+          <div style={{
+            marginTop: 'auto',
+            textAlign: 'center',
+            paddingTop: '16px'
+          }}>
+            <button
+              onClick={goHome}
+              className="back-to-home-button"
+            >
+              ← BACK TO HOME
+            </button>
+          </div>
         </div>
-      </div>
-    )}
+      )}
+      
+      {mode === 'results' && !loading && results.length === 0 && (
+        <div style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: '20vh',
+          background: 'linear-gradient(180deg, #ffebee 0%, #f8f9fa 50%, #ffffff 100%)',
+          border: '4px solid #DC143C',
+          borderBottom: 'none',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          animation: 'slideUp 0.5s ease-out',
+          boxShadow: '0 -8px 0px rgba(220,20,60,0.3)'
+        }}>
+          <div style={{ 
+            textAlign: 'center',
+            background: '#fff',
+            padding: '24px 32px',
+            boxShadow: '6px 6px 0px rgba(0,0,0,0.3)',
+            border: 'none'
+          }}>
+            <div style={{
+              color: '#6C63FF',
+              fontSize: '24px',
+              fontWeight: 800,
+              fontFamily: 'Trebuchet MS, monospace',
+              marginBottom: '8px',
+              textShadow: '2px 2px 0px rgba(108,99,255,0.2)'
+            }}>
+              NO RESULTS FOUND
+            </div>
+            <div style={{
+              color: '#666',
+              fontSize: '16px',
+              fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+              fontWeight: 500,
+              marginBottom: '16px'
+            }}>
+              The sloth bear couldn't find anything. Try different keywords!
+            </div>
+            <button
+              onClick={goHome}
+              className="back-to-home-button-no-results"
+            >
+              ← BACK TO HOME
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
