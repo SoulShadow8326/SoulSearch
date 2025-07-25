@@ -4,12 +4,14 @@ import (
 	"database/sql"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 var DB *sql.DB
+var DBMutex sync.Mutex
 
 func InitDB() {
 	err := os.MkdirAll("./data", os.ModePerm)
@@ -53,7 +55,6 @@ func InitDB() {
 	);
 	`
 
-
 	_, err = db.Exec(createPages)
 	if err != nil {
 		log.Fatal("Failed to create pages table:", err)
@@ -67,11 +68,12 @@ func InitDB() {
 		log.Fatal("Failed to create inverted_index table:", err)
 	}
 
-
 	DB = db
 }
 
 func StorePageData(page PageData) error {
+	DBMutex.Lock()
+	defer DBMutex.Unlock()
 	_, err := DB.Exec(`INSERT OR IGNORE INTO pages (url) VALUES (?)`, page.URL)
 	if err != nil {
 		return err
@@ -116,9 +118,9 @@ func StorePageData(page PageData) error {
 	return tx.Commit()
 }
 
-
-
 func StoreLinks(from string, to []string) error {
+	DBMutex.Lock()
+	defer DBMutex.Unlock()
 	tx, err := DB.Begin()
 	if err != nil {
 		return err
@@ -129,7 +131,7 @@ func StoreLinks(from string, to []string) error {
 	err = tx.QueryRow(`SELECT id FROM pages WHERE url = ?`, from).Scan(&fromID)
 	if err != nil {
 		log.Println("from_id not found:", from)
-		return nil 
+		return nil
 	}
 
 	stmtInsertPage, err := tx.Prepare(`INSERT OR IGNORE INTO pages (url) VALUES (?)`)
@@ -172,6 +174,8 @@ func LoadVisitedFromDB() {
 }
 
 func QueueLinks(links []string) {
+	DBMutex.Lock()
+	defer DBMutex.Unlock()
 	for _, link := range links {
 		_, err := DB.Exec(`INSERT OR IGNORE INTO pages (url) VALUES (?)`, link)
 		if err != nil {

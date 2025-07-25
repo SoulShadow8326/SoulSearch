@@ -1,11 +1,11 @@
 package main
 
 import (
+	"log"
+	"math"
 	"sort"
 	"strings"
 	"unicode"
-	"log"
-	"math"
 )
 
 func Search(query string) []SearchResult {
@@ -87,7 +87,6 @@ func Search(query string) []SearchResult {
 
 	return results
 }
-
 
 func tokenize(s string) []string {
 	var tokens []string
@@ -208,6 +207,8 @@ func ComputePageRank(iterations int, damping float64) {
 		pages = newScores
 	}
 
+	DBMutex.Lock()
+	defer DBMutex.Unlock()
 	tx, err := DB.Begin()
 	if err != nil {
 		log.Println("Failed to begin PageRank tx:", err)
