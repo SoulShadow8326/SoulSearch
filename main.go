@@ -15,17 +15,13 @@ func main() {
 	LoadVisitedFromDB()
 
 	if crawlEnabled {
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
 			QueueLinks([]string{"https://en.wikipedia.org/wiki/Main_Page"})
 			Crawl()
 		}()
 	}
 
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		for {
 			time.Sleep(5 * time.Minute)
 			ComputePageRank(20, 0.85)
@@ -56,17 +52,13 @@ func main() {
 		http.NotFound(w, r)
 	})
 
-	go func() {
-		port := os.Getenv("PORT")
-		if port == "" {
-			port = "8080"
-		}
-		if err := http.ListenAndServe(":"+port, nil); err != nil {
-			panic(err)
-		}
-	}()
-
-	wg.Wait()
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		panic(err)
+	}
 }
 
 func handleSearch(w http.ResponseWriter, r *http.Request) {
