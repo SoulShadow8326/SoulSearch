@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-var crawlEnabled = false
+var crawlEnabled = True
 
 func main() {
 	InitDB()
