@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-var crawlEnabled = false
+var crawlEnabled = true
 
 func main() {
 	InitDB()
@@ -57,7 +57,11 @@ func main() {
 	})
 
 	go func() {
-		if err := http.ListenAndServe(":8080", nil); err != nil {
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		if err := http.ListenAndServe(":"+port, nil); err != nil {
 			panic(err)
 		}
 	}()
@@ -77,9 +81,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 
 	response := struct {
-		Results []SearchResult `json:"results"`
-		Total int `json:"total"`
-		TimeTaken string `json:"time_taken"`
+		Results   []SearchResult `json:"results"`
+		Total     int            `json:"total"`
+		TimeTaken string         `json:"time_taken"`
 	}{
 		Results:   results,
 		Total:     len(results),
